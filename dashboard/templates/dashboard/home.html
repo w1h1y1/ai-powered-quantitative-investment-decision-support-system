@@ -1,0 +1,150 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="AI-powered quantitative investment dashboard">
+    <title>Dashboard | AI Quant</title>
+    <link rel="stylesheet" href="{% static 'dashboard/css/dashboard.css' %}?v=dashboard-shell-1">
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar" aria-label="Primary navigation">
+            <a class="brand" href="/" aria-label="AI Quant dashboard">
+                <span class="brand-mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" role="img">
+                        <path d="M5 16.5 9.2 12l3.1 2.8L19 7.5"></path>
+                        <path d="M15 7.5h4v4"></path>
+                    </svg>
+                </span>
+                <span class="brand-copy">
+                    <strong>AI Quant</strong>
+                    <small>Investment Intelligence</small>
+                </span>
+            </a>
+
+            <nav class="sidebar-nav">
+                <p class="nav-label">Workspace</p>
+                <ul>
+                    <li>
+                        <a class="nav-link is-active" href="/" aria-current="page">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <rect x="3" y="3" width="7" height="7" rx="2"></rect>
+                                <rect x="14" y="3" width="7" height="7" rx="2"></rect>
+                                <rect x="3" y="14" width="7" height="7" rx="2"></rect>
+                                <rect x="14" y="14" width="7" height="7" rx="2"></rect>
+                            </svg>
+                            <span>Dashboard</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a class="nav-link" href="#">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M4 19V9"></path>
+                                <path d="M10 19V5"></path>
+                                <path d="M16 19v-7"></path>
+                                <path d="M22 19H2"></path>
+                            </svg>
+                            <span>Market Analysis</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a class="nav-link" href="#">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M4 7.5h16v11H4z"></path>
+                                <path d="M8 7.5V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2.5"></path>
+                                <path d="M4 12h16"></path>
+                            </svg>
+                            <span>Portfolio</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a class="nav-link" href="#">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M4 18 9 13l3 3 7-8"></path>
+                                <path d="M15 8h4v4"></path>
+                                <path d="M4 5v14h16"></path>
+                            </svg>
+                            <span>Strategy Backtesting</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a class="nav-link" href="#">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M8.5 16.5h7"></path>
+                                <path d="M9.5 20h5"></path>
+                                <path d="M8.2 13.4A6 6 0 1 1 15.8 13.4c-.8.6-1.3 1.4-1.3 2.1h-5c0-.7-.5-1.5-1.3-2.1Z"></path>
+                            </svg>
+                            <span>AI Insights</span>
+                        </a>
+                    </li>
+                </ul>
+            </nav>
+
+            <div class="sidebar-footer">
+                <span class="status-dot" aria-hidden="true"></span>
+                <span>
+                    <strong>System online</strong>
+                    <small>All services operational</small>
+                </span>
+            </div>
+        </aside>
+
+        <div class="workspace">
+            <header class="topbar">
+                <div class="page-heading">
+                    <p>Investment workspace</p>
+                    <h1>Dashboard</h1>
+                </div>
+
+                <div class="header-actions">
+                    <label class="search-box">
+                        <span class="sr-only">Search</span>
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <circle cx="11" cy="11" r="7"></circle>
+                            <path d="m20 20-4-4"></path>
+                        </svg>
+                        <input type="search" placeholder="Search markets, assets..." aria-label="Search markets and assets">
+                    </label>
+
+                    <button class="icon-button" type="button" aria-label="Notifications">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path>
+                            <path d="M10 21h4"></path>
+                        </svg>
+                        <span class="notification-dot" aria-hidden="true"></span>
+                    </button>
+
+                    <div class="user-profile" aria-label="Current user">
+                        <span class="avatar" aria-hidden="true">AQ</span>
+                        <span class="user-copy">
+                            <strong>Quant Analyst</strong>
+                            <small>Research workspace</small>
+                        </span>
+                        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="m8 10 4 4 4-4"></path>
+                        </svg>
+                    </div>
+                </div>
+            </header>
+
+            <main class="main-content">
+                <section class="content-canvas" aria-labelledby="workspace-title">
+                    <div class="canvas-icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24">
+                            <path d="M4 19V9"></path>
+                            <path d="M10 19V5"></path>
+                            <path d="M16 19v-7"></path>
+                            <path d="M22 19H2"></path>
+                        </svg>
+                    </div>
+                    <p class="eyebrow">Dashboard workspace</p>
+                    <h2 id="workspace-title">Your investment overview will live here</h2>
+                    <p>Market data, portfolio metrics, strategy results and AI insights will be added in the next development stages.</p>
+                </section>
+            </main>
+        </div>
+    </div>
+</body>
+</html>

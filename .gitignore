@@ -1,0 +1,31 @@
+.venv/
+venv/
+__pycache__/
+**pycache**/
+*.py[cod]
+*.pyc
+.env
+
+# IDE temporary files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+# Local database
+db.sqlite3
+*.sqlite3
+
+# Runtime logs
+*.log
+
+# Frontend dependencies and builds
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+
+# Test and coverage files
+.pytest_cache/
+.coverage
+htmlcov/
