@@ -33,6 +33,7 @@ ALLOWED_HOSTS = env.list('DJANGO_ALLOWED_HOSTS', default=['127.0.0.1', 'localhos
 
 INSTALLED_APPS = [
     'accounts.apps.AccountsConfig',
+    'backtest.apps.BacktestConfig',
     'dashboard.apps.DashboardConfig',
     'market.apps.MarketConfig',
     'portfolio.apps.PortfolioConfig',
@@ -118,7 +119,30 @@ CSRF_TRUSTED_ORIGINS = env.list(
 TWELVE_DATA_API_KEY = env('TWELVE_DATA_API_KEY', default='')
 TWELVE_DATA_BASE_URL = env('TWELVE_DATA_BASE_URL', default='https://api.twelvedata.com')
 TWELVE_DATA_TIMEOUT_SECONDS = env.int('TWELVE_DATA_TIMEOUT_SECONDS', default=12)
+TWELVE_DATA_TIMEZONE = env('TWELVE_DATA_TIMEZONE', default='America/New_York')
 MARKET_DATA_CACHE_TTL_SECONDS = env.int('MARKET_DATA_CACHE_TTL_SECONDS', default=21600)
+MARKET_DATA_COMPLETE_DAY_BUFFER_MINUTES = env.int('MARKET_DATA_COMPLETE_DAY_BUFFER_MINUTES', default=15)
+MARKET_SUMMARY_CACHE_TTL_SECONDS = env.int('MARKET_SUMMARY_CACHE_TTL_SECONDS', default=60)
+MARKET_DATA_QUOTE_CACHE_TTL_SECONDS = env.int('MARKET_DATA_QUOTE_CACHE_TTL_SECONDS', default=60)
+MARKET_DATA_SYMBOL_SEARCH_CACHE_TTL_SECONDS = env.int('MARKET_DATA_SYMBOL_SEARCH_CACHE_TTL_SECONDS', default=300)
+PORTFOLIO_PERFORMANCE_CACHE_TTL_SECONDS = env.int('PORTFOLIO_PERFORMANCE_CACHE_TTL_SECONDS', default=60)
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'loggers': {
+        'market': {
+            'handlers': ['console'],
+            'level': env('MARKET_DATA_LOG_LEVEL', default='INFO'),
+            'propagate': False,
+        },
+    },
+}
 
 # Local development uses HTTP. In production, set both secure cookie flags to True.
 SESSION_COOKIE_SECURE = env.bool('SESSION_COOKIE_SECURE', default=False)

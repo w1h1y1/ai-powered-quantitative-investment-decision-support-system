@@ -6,10 +6,12 @@ class Security(models.Model):
         STOCK = 'STOCK', 'Stock'
         ETF = 'ETF', 'ETF'
 
-    symbol = models.CharField(max_length=16, unique=True, db_index=True)
+    symbol = models.CharField(max_length=16, db_index=True)
     name = models.CharField(max_length=255)
     asset_type = models.CharField(max_length=8, choices=AssetType.choices)
     exchange = models.CharField(max_length=64)
+    mic_code = models.CharField(max_length=16, blank=True, default='')
+    country = models.CharField(max_length=64, blank=True, default='')
     currency = models.CharField(max_length=3, default='USD')
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -20,11 +22,20 @@ class Security(models.Model):
         indexes = [
             models.Index(fields=['symbol'], name='security_symbol_idx'),
             models.Index(fields=['asset_type', 'is_active'], name='security_type_active_idx'),
+            models.Index(fields=['symbol', 'mic_code'], name='security_symbol_mic_idx'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['symbol', 'mic_code'],
+                name='unique_security_symbol_mic_code',
+            ),
         ]
         verbose_name_plural = 'securities'
 
     def save(self, *args, **kwargs):
         self.symbol = self.symbol.strip().upper()
+        self.mic_code = self.mic_code.strip().upper()
+        self.country = self.country.strip()
         self.currency = self.currency.strip().upper()
         super().save(*args, **kwargs)
 

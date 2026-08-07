@@ -29,9 +29,14 @@ function getRsiSummary(value) {
 export default function IndicatorOverlayControls({ history, options, selectedOverlays, onToggle }) {
   const closes = useMemo(() => history.candles.map((candle) => candle.close), [history.candles])
   const currentRsi = useMemo(() => {
+    const indicatorRsi = history.indicators
+      ?.map((indicator) => indicator.rsi)
+      .findLast((value) => Number.isFinite(value))
+    if (Number.isFinite(indicatorRsi)) return indicatorRsi
+
     const values = getIndicatorSeries('rsi', closes).primary
     return values.findLast((value) => Number.isFinite(value)) ?? 50
-  }, [closes])
+  }, [closes, history.indicators])
   const rsiSummary = getRsiSummary(currentRsi)
 
   return (
@@ -44,7 +49,7 @@ export default function IndicatorOverlayControls({ history, options, selectedOve
         <span className="technical-symbol">{selectedOverlays.length} active</span>
       </div>
 
-      <p className="overlay-help">K Line candles remain visible. Select any combination of overlays.</p>
+      <p className="overlay-help">Price chart remains visible with the selected overlays.</p>
 
       <div className="overlay-switcher" role="group" aria-label="Price chart overlays">
         {options.map((option) => {

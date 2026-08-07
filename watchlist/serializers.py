@@ -65,3 +65,27 @@ class WatchlistItemSerializer(serializers.ModelSerializer):
         fields = ['id', 'watchlist', 'security', 'security_id', 'added_at']
         read_only_fields = ['id', 'security', 'added_at']
         validators = []
+
+
+class WatchlistAddSymbolSerializer(serializers.Serializer):
+    id = serializers.IntegerField(required=False, allow_null=True)
+    symbol = serializers.CharField(max_length=16, trim_whitespace=True)
+    name = serializers.CharField(max_length=255, required=False, allow_blank=True, trim_whitespace=True)
+    exchange = serializers.CharField(max_length=64, required=False, allow_blank=True, trim_whitespace=True)
+    mic_code = serializers.CharField(max_length=16, required=False, allow_blank=True, trim_whitespace=True)
+    instrument_type = serializers.CharField(max_length=64, required=False, allow_blank=True, trim_whitespace=True)
+    country = serializers.CharField(max_length=64, required=False, allow_blank=True, trim_whitespace=True)
+    currency = serializers.CharField(max_length=3, required=False, allow_blank=True, trim_whitespace=True)
+    search_query = serializers.CharField(max_length=255, required=False, allow_blank=True, trim_whitespace=True)
+
+    def validate_symbol(self, value):
+        normalized = value.strip().upper()
+        if not normalized:
+            raise serializers.ValidationError('Symbol is required.')
+        return normalized
+
+    def validate_mic_code(self, value):
+        return value.strip().upper()
+
+    def validate_currency(self, value):
+        return (value.strip() or 'USD').upper()

@@ -2,7 +2,10 @@ import { useMemo } from 'react'
 import { buildTechnicalSummary } from './chartMath'
 
 export default function TechnicalSummary({ history }) {
-  const items = useMemo(() => buildTechnicalSummary(history.candles), [history.candles])
+  const items = useMemo(
+    () => buildTechnicalSummary(history.candles, history.indicators),
+    [history.candles, history.indicators],
+  )
 
   return (
     <section className="market-panel technical-summary-panel" aria-labelledby="technical-summary-title">
@@ -11,7 +14,7 @@ export default function TechnicalSummary({ history }) {
           <p>Decision support snapshot</p>
           <h2 id="technical-summary-title">Technical Summary</h2>
         </div>
-        <span>Demo data · Descriptive signals, not a forecast</span>
+        <span>Market data - Descriptive signals, not a forecast</span>
       </div>
 
       <dl className="technical-summary-grid">

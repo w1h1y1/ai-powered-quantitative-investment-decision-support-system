@@ -18,9 +18,23 @@ from django.contrib import admin
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from market.views import SecurityDailyMarketDataView, SecurityViewSet
-from portfolio.views import HoldingViewSet, PortfolioSummaryView, PortfolioViewSet, TradeTransactionViewSet
-from watchlist.views import WatchlistItemViewSet, WatchlistViewSet
+from backtest.views import BacktestRunView
+from market.views import (
+    MarketSummaryView,
+    SecurityDailyMarketDataView,
+    SecurityLatestQuoteView,
+    SecurityLatestQuotesView,
+    SecurityViewSet,
+)
+from portfolio.views import (
+    HoldingViewSet,
+    PortfolioPerformanceView,
+    PortfolioResetTestDataView,
+    PortfolioSummaryView,
+    PortfolioViewSet,
+    TradeTransactionViewSet,
+)
+from watchlist.views import WatchlistAddSymbolView, WatchlistItemViewSet, WatchlistSummaryView, WatchlistViewSet
 
 router = DefaultRouter()
 router.register('securities', SecurityViewSet, basename='security')
@@ -32,8 +46,16 @@ router.register('watchlist-items', WatchlistItemViewSet, basename='watchlist-ite
 
 urlpatterns = [
     path('api/auth/', include('accounts.urls')),
+    path('api/backtests/run/', BacktestRunView.as_view(), name='backtest-run'),
+    path('api/market-data/summary/', MarketSummaryView.as_view(), name='market-data-summary'),
+    path('api/market-data/quote/', SecurityLatestQuoteView.as_view(), name='market-data-quote'),
+    path('api/market-data/quotes/', SecurityLatestQuotesView.as_view(), name='market-data-quotes'),
     path('api/market-data/daily/', SecurityDailyMarketDataView.as_view(), name='market-data-daily'),
     path('api/portfolio/summary/', PortfolioSummaryView.as_view(), name='portfolio-summary'),
+    path('api/portfolio/performance/', PortfolioPerformanceView.as_view(), name='portfolio-performance'),
+    path('api/portfolio/reset-test-data/', PortfolioResetTestDataView.as_view(), name='portfolio-reset-test-data'),
+    path('api/watchlist/summary/', WatchlistSummaryView.as_view(), name='watchlist-summary'),
+    path('api/watchlist/add-symbol/', WatchlistAddSymbolView.as_view(), name='watchlist-add-symbol'),
     path('api/', include(router.urls)),
     path('', include('dashboard.urls')),
     path('admin/', admin.site.urls),

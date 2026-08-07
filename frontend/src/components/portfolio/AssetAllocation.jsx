@@ -67,7 +67,7 @@ export default function AssetAllocation({ allocation, holdingsValue }) {
         <div>
           <p>Current position mix</p>
           <h2 id="position-allocation-title">Position Allocation</h2>
-          <span className="portfolio-allocation-basis">Demo pricing from Portfolio Summary API</span>
+          <span className="portfolio-allocation-basis">Pricing from Portfolio Summary API</span>
         </div>
       </div>
 

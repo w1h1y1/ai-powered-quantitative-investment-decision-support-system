@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Holding, Portfolio, TradeTransaction
+from .models import Holding, Portfolio, PortfolioCashFlow, TradeTransaction
 
 
 @admin.register(Portfolio)
@@ -24,6 +24,19 @@ class HoldingAdmin(admin.ModelAdmin):
     ]
 
 
+@admin.register(PortfolioCashFlow)
+class PortfolioCashFlowAdmin(admin.ModelAdmin):
+    list_display = ['portfolio', 'flow_type', 'amount', 'effective_date', 'is_estimated', 'created_at']
+    list_filter = ['flow_type', 'is_estimated', 'effective_date']
+    search_fields = [
+        'portfolio__name',
+        'portfolio__user__username',
+        'portfolio__user__email',
+        'note',
+    ]
+    ordering = ['-effective_date', '-created_at']
+
+
 @admin.register(TradeTransaction)
 class TradeTransactionAdmin(admin.ModelAdmin):
     list_display = [
@@ -35,6 +48,7 @@ class TradeTransactionAdmin(admin.ModelAdmin):
         'price',
         'cash_amount',
         'fee',
+        'realized_profit_loss',
         'transaction_date',
     ]
     list_filter = ['transaction_type', 'portfolio', 'security', 'transaction_date']

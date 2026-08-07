@@ -103,13 +103,20 @@ function normalizeDateTime(value) {
 
 export function validateTradeFields(values) {
   const fieldErrors = {}
+  const hasSelectedSecurity = Boolean(
+    values?.securityId
+    || (
+      values?.transactionType === 'BUY'
+      && String(values?.securitySubmission?.symbol ?? '').trim()
+    ),
+  )
   const formError = !values?.portfolioId
     ? 'Portfolio is unavailable. Please reload the page.'
     : !['BUY', 'SELL'].includes(values.transactionType)
       ? 'Please select a transaction type.'
       : ''
 
-  if (!values?.securityId) fieldErrors.security = 'Please select a security.'
+  if (!hasSelectedSecurity) fieldErrors.security = 'Please select a security.'
 
   if (isBlank(values?.quantity)) {
     fieldErrors.quantity = 'Quantity is required.'
@@ -244,10 +251,9 @@ export function buildTradeTransactionPayload(values) {
   const fee = isBlank(values.fee)
     ? { units: 0n }
     : parseMoneyInput(values.fee, { allowZero: true })
-
-  return {
+  const securitySubmission = values.securitySubmission || {}
+  const payload = {
     portfolio: values.portfolioId,
-    security_id: values.securityId,
     transaction_type: values.transactionType,
     quantity: `${quantity.text}${quantity.text.includes('.') ? '' : '.'}`
       .replace(/^(\d+)(?:\.(\d*))?$/, (_, whole, decimals = '') => `${whole}.${decimals.padEnd(6, '0')}`),
@@ -257,6 +263,24 @@ export function buildTradeTransactionPayload(values) {
     fee: `${fee.units / moneyMultiplier}.${String(fee.units % moneyMultiplier).padStart(2, '0')}`,
     notes: values.notes?.trim() ?? '',
   }
+
+  if (values.securityId) {
+    payload.security_id = values.securityId
+    return payload
+  }
+
+  if (values.transactionType === 'BUY' && securitySubmission.symbol) {
+    payload.symbol = securitySubmission.symbol
+    payload.name = securitySubmission.name ?? ''
+    payload.exchange = securitySubmission.exchange ?? ''
+    payload.mic_code = securitySubmission.mic_code ?? securitySubmission.micCode ?? ''
+    payload.instrument_type = securitySubmission.instrument_type ?? securitySubmission.instrumentType ?? ''
+    payload.country = securitySubmission.country ?? ''
+    payload.currency = securitySubmission.currency ?? 'USD'
+    payload.search_query = securitySubmission.search_query ?? securitySubmission.searchQuery ?? securitySubmission.symbol
+  }
+
+  return payload
 }
 
 export async function submitTradeTransaction({

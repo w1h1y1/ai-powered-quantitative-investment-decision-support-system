@@ -17,6 +17,119 @@ const dateFormatter = new Intl.DateTimeFormat('en-US', {
   day: 'numeric',
   year: 'numeric',
 })
+const transactionPageSizeOptions = [10, 25, 50]
+const canShowResetTestPortfolio = Boolean(import.meta.env.DEV)
+
+function padDatePart(value) {
+  return String(value).padStart(2, '0')
+}
+
+function formatLocalDate(value) {
+  return `${value.getFullYear()}-${padDatePart(value.getMonth() + 1)}-${padDatePart(value.getDate())}`
+}
+
+function addDays(value, days) {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate() + days)
+}
+
+function subtractMonths(value, months) {
+  const result = new Date(value.getFullYear(), value.getMonth(), 1)
+  const targetDay = value.getDate()
+  result.setMonth(result.getMonth() - months)
+  const lastDayOfTargetMonth = new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate()
+  result.setDate(Math.min(targetDay, lastDayOfTargetMonth))
+  return result
+}
+
+function getQuarterRange(preset, year) {
+  const quarterMonthRanges = {
+    Q1: [0, 2],
+    Q2: [3, 5],
+    Q3: [6, 8],
+    Q4: [9, 11],
+  }
+  const [startMonth, endMonth] = quarterMonthRanges[preset] || quarterMonthRanges.Q1
+  return {
+    startDate: formatLocalDate(new Date(year, startMonth, 1)),
+    endDate: formatLocalDate(new Date(year, endMonth + 1, 0)),
+  }
+}
+
+function getTransactionDateRange(filters) {
+  const today = new Date()
+  const todayString = formatLocalDate(today)
+  if (filters.preset === '7D') {
+    return { startDate: formatLocalDate(addDays(today, -6)), endDate: todayString }
+  }
+  if (filters.preset === '1M') {
+    return { startDate: formatLocalDate(subtractMonths(today, 1)), endDate: todayString }
+  }
+  if (filters.preset === '3M') {
+    return { startDate: formatLocalDate(subtractMonths(today, 3)), endDate: todayString }
+  }
+  if (filters.preset === 'YTD') {
+    return { startDate: formatLocalDate(new Date(today.getFullYear(), 0, 1)), endDate: todayString }
+  }
+  if (['Q1', 'Q2', 'Q3', 'Q4'].includes(filters.preset)) {
+    return getQuarterRange(filters.preset, filters.year)
+  }
+  if (filters.preset === 'CUSTOM') {
+    return {
+      startDate: filters.customStartDate || todayString,
+      endDate: filters.customEndDate || todayString,
+    }
+  }
+  return { startDate: todayString, endDate: todayString }
+}
+
+function createDefaultTransactionFilters() {
+  const todayString = formatLocalDate(new Date())
+  return {
+    preset: 'TODAY',
+    year: new Date().getFullYear(),
+    customStartDate: todayString,
+    customEndDate: todayString,
+    page: 1,
+    pageSize: 10,
+  }
+}
+
+function buildTransactionQuery(filters) {
+  const { startDate, endDate } = getTransactionDateRange(filters)
+  return {
+    start_date: startDate,
+    end_date: endDate,
+    page: filters.page,
+    page_size: filters.pageSize,
+  }
+}
+
+function normalizeTransactionListResponse(response, filters) {
+  if (Array.isArray(response)) {
+    return {
+      transactions: response,
+      pagination: {
+        count: response.length,
+        next: null,
+        previous: null,
+        page: filters.page,
+        pageSize: filters.pageSize,
+      },
+    }
+  }
+
+  const transactions = Array.isArray(response?.results) ? response.results : []
+  return {
+    transactions,
+    pagination: {
+      count: Number.isFinite(Number(response?.count)) ? Number(response.count) : transactions.length,
+      next: response?.next || null,
+      previous: response?.previous || null,
+      page: filters.page,
+      pageSize: filters.pageSize,
+    },
+  }
+}
 
 function formatPortfolioDate(value) {
   if (!value) return 'Created date unavailable'
@@ -107,17 +220,30 @@ export default function PortfolioContent({ onViewAnalysis }) {
   const [createPortfolioError, setCreatePortfolioError] = useState('')
   const [isSubmittingTrade, setIsSubmittingTrade] = useState(false)
   const [transactions, setTransactions] = useState([])
+  const [transactionPagination, setTransactionPagination] = useState({
+    count: 0,
+    next: null,
+    previous: null,
+    page: 1,
+    pageSize: 10,
+  })
+  const [transactionFilters, setTransactionFilters] = useState(createDefaultTransactionFilters)
   const [isTransactionsLoading, setIsTransactionsLoading] = useState(true)
   const [transactionsError, setTransactionsError] = useState('')
   const [dialog, setDialog] = useState(null)
   const [notice, setNotice] = useState('')
   const [holdingActionError, setHoldingActionError] = useState('')
+  const [transactionActionError, setTransactionActionError] = useState('')
+  const [isResettingPortfolio, setIsResettingPortfolio] = useState(false)
+  const [performanceRefreshKey, setPerformanceRefreshKey] = useState(0)
 
-  const loadPortfolioData = useCallback(async () => {
-    setIsPortfolioLoading(true)
+  const loadPortfolioData = useCallback(async ({ showLoading = true } = {}) => {
+    if (showLoading) {
+      setIsPortfolioLoading(true)
+      setPortfolioSummary(null)
+      setSecurities([])
+    }
     setPortfolioError('')
-    setPortfolioSummary(null)
-    setSecurities([])
     try {
       const [summaryResponse, securityResponse] = await Promise.all([
         portfolioApi.summary(),
@@ -126,30 +252,40 @@ export default function PortfolioContent({ onViewAnalysis }) {
       setPortfolioSummary(normalizePortfolioSummary(summaryResponse))
       setSecurities(Array.isArray(securityResponse) ? securityResponse : [])
     } catch (error) {
-      setPortfolioError(error.message || 'Request failed. Please try again.')
+      const message = error.message || 'Request failed. Please try again.'
+      if (!showLoading) throw new Error(message)
+      setPortfolioError(message)
     } finally {
-      setIsPortfolioLoading(false)
+      if (showLoading) setIsPortfolioLoading(false)
     }
   }, [])
 
-  const loadTransactions = useCallback(async () => {
-    setIsTransactionsLoading(true)
-    setTransactionsError('')
-    setTransactions([])
-    try {
-      const response = await transactionApi.list()
-      setTransactions(Array.isArray(response) ? response : [])
-    } catch (error) {
-      setTransactionsError(error.message || 'Request failed. Please try again.')
-    } finally {
-      setIsTransactionsLoading(false)
+  const loadTransactions = useCallback(async ({ showLoading = true } = {}) => {
+    if (showLoading) {
+      setIsTransactionsLoading(true)
     }
-  }, [])
+    setTransactionsError('')
+    try {
+      const response = await transactionApi.list(buildTransactionQuery(transactionFilters))
+      const normalizedResponse = normalizeTransactionListResponse(response, transactionFilters)
+      setTransactions(normalizedResponse.transactions)
+      setTransactionPagination(normalizedResponse.pagination)
+    } catch (error) {
+      const message = error.message || 'Request failed. Please try again.'
+      if (!showLoading) throw new Error(message)
+      setTransactionsError(message)
+    } finally {
+      if (showLoading) setIsTransactionsLoading(false)
+    }
+  }, [transactionFilters])
 
   useEffect(() => {
     loadPortfolioData()
+  }, [loadPortfolioData])
+
+  useEffect(() => {
     loadTransactions()
-  }, [loadPortfolioData, loadTransactions])
+  }, [loadTransactions])
 
   const activePortfolio = portfolioSummary ? {
     id: portfolioSummary.portfolioId,
@@ -162,6 +298,61 @@ export default function PortfolioContent({ onViewAnalysis }) {
     () => securities.map(normalizeSecurity).filter((security) => security?.isActive),
     [securities],
   )
+
+  const refreshPortfolioSections = useCallback(async () => {
+    await Promise.all([
+      loadPortfolioData({ showLoading: false }),
+      loadTransactions({ showLoading: false }),
+    ])
+    setPerformanceRefreshKey((value) => value + 1)
+  }, [loadPortfolioData, loadTransactions])
+
+  const selectTransactionPreset = useCallback((preset) => {
+    setTransactionFilters((currentFilters) => ({
+      ...currentFilters,
+      preset,
+      page: 1,
+    }))
+  }, [])
+
+  const changeTransactionYear = useCallback((year) => {
+    const parsedYear = Number(year)
+    if (!Number.isInteger(parsedYear) || parsedYear < 1900 || parsedYear > 2200) return
+    setTransactionFilters((currentFilters) => ({
+      ...currentFilters,
+      year: parsedYear,
+      page: 1,
+    }))
+  }, [])
+
+  const changeCustomTransactionDate = useCallback((field, value) => {
+    if (!['customStartDate', 'customEndDate'].includes(field)) return
+    setTransactionFilters((currentFilters) => ({
+      ...currentFilters,
+      [field]: value,
+      preset: 'CUSTOM',
+      page: 1,
+    }))
+  }, [])
+
+  const changeTransactionPage = useCallback((page) => {
+    const parsedPage = Number(page)
+    if (!Number.isInteger(parsedPage) || parsedPage < 1) return
+    setTransactionFilters((currentFilters) => ({
+      ...currentFilters,
+      page: parsedPage,
+    }))
+  }, [])
+
+  const changeTransactionPageSize = useCallback((pageSize) => {
+    const parsedPageSize = Number(pageSize)
+    if (!transactionPageSizeOptions.includes(parsedPageSize)) return
+    setTransactionFilters((currentFilters) => ({
+      ...currentFilters,
+      page: 1,
+      pageSize: parsedPageSize,
+    }))
+  }, [])
 
   const createPortfolio = async (payload) => {
     setCreatePortfolioError('')
@@ -179,12 +370,14 @@ export default function PortfolioContent({ onViewAnalysis }) {
   const openBuyDialog = () => {
     setNotice('')
     setHoldingActionError('')
+    setTransactionActionError('')
     setDialog({ type: 'trade', transactionType: 'BUY' })
   }
 
   const openSellDialog = (holding) => {
     setNotice('')
     setHoldingActionError('')
+    setTransactionActionError('')
     setDialog({ type: 'trade', transactionType: 'SELL', holding })
   }
 
@@ -196,8 +389,8 @@ export default function PortfolioContent({ onViewAnalysis }) {
     try {
       const result = await submitTradeTransaction({
         transactionApi,
-        reloadPortfolioData: loadPortfolioData,
-        reloadTransactions: loadTransactions,
+        reloadPortfolioData: () => loadPortfolioData({ showLoading: false }),
+        reloadTransactions: () => loadTransactions({ showLoading: false }),
         values: {
           ...values,
           portfolioId: activePortfolio.id,
@@ -209,9 +402,29 @@ export default function PortfolioContent({ onViewAnalysis }) {
       const security = normalizedSecurities.find((item) => item.id === values.securityId)
       const actionLabel = values.transactionType === 'SELL' ? 'Sell' : 'Buy'
       setNotice(`${actionLabel} transaction recorded${security ? ` for ${security.symbol}` : ''}.`)
+      setPerformanceRefreshKey((value) => value + 1)
       return ''
     } finally {
       setIsSubmittingTrade(false)
+    }
+  }
+
+  const resetTestPortfolio = async () => {
+    if (isResettingPortfolio) return
+    const confirmed = window.confirm('Reset this test Portfolio? This will delete your transactions and holdings, restore the initial balance, and refresh performance history.')
+    if (!confirmed) return
+
+    setNotice('')
+    setTransactionActionError('')
+    setIsResettingPortfolio(true)
+    try {
+      await portfolioApi.resetTestData()
+      await refreshPortfolioSections()
+      setNotice('Test Portfolio reset.')
+    } catch (error) {
+      setTransactionActionError(error.message || 'Unable to reset the test Portfolio.')
+    } finally {
+      setIsResettingPortfolio(false)
     }
   }
 
@@ -281,7 +494,7 @@ export default function PortfolioContent({ onViewAnalysis }) {
         </div>
         <div className="demo-data-status" aria-label="Portfolio data source">
           <strong>Portfolio Data</strong>
-          <span>PostgreSQL summary and holdings - Demo pricing</span>
+          <span>PostgreSQL summary and market-data pricing</span>
         </div>
       </section>
 
@@ -289,6 +502,7 @@ export default function PortfolioContent({ onViewAnalysis }) {
 
       <div className="portfolio-analytics-grid">
         <PortfolioPerformanceChart
+          refreshKey={performanceRefreshKey}
           totalAccountValue={portfolio.summary.totalAccountValue}
           costBasis={portfolio.summary.costBasis}
         />
@@ -311,8 +525,18 @@ export default function PortfolioContent({ onViewAnalysis }) {
       />
 
       <RecentTransactions
+        actionError={transactionActionError}
+        filters={transactionFilters}
         error={transactionsError}
         isLoading={isTransactionsLoading}
+        onCustomDateChange={changeCustomTransactionDate}
+        onPageChange={changeTransactionPage}
+        onPageSizeChange={changeTransactionPageSize}
+        onPresetChange={selectTransactionPreset}
+        onYearChange={changeTransactionYear}
+        isResetting={isResettingPortfolio}
+        onReset={canShowResetTestPortfolio ? resetTestPortfolio : undefined}
+        pagination={transactionPagination}
         transactions={transactions}
       />
 

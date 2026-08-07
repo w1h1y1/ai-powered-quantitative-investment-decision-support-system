@@ -59,49 +59,6 @@ export const mockSystemStatus = {
   detail: 'All services operational',
 }
 
-export const marketSummary = [
-  {
-    symbol: 'SPX',
-    name: 'S&P 500',
-    value: '5,489.03',
-    change: '+20.14',
-    percent: '+0.38%',
-    direction: 'up',
-    color: '#6877f5',
-    trend: [42, 45, 43, 48, 51, 50, 56, 59, 58, 64, 67, 71],
-  },
-  {
-    symbol: 'IXIC',
-    name: 'NASDAQ',
-    value: '17,862.23',
-    change: '+112.38',
-    percent: '+0.63%',
-    direction: 'up',
-    color: '#2bbf8a',
-    trend: [36, 38, 41, 39, 45, 49, 47, 53, 57, 61, 64, 68],
-  },
-  {
-    symbol: 'DJI',
-    name: 'Dow Jones',
-    value: '39,872.99',
-    change: '-44.77',
-    percent: '-0.11%',
-    direction: 'down',
-    color: '#ef6a78',
-    trend: [66, 63, 65, 61, 58, 60, 56, 54, 57, 52, 50, 48],
-  },
-  {
-    symbol: 'BTC',
-    name: 'Bitcoin',
-    value: '$67,432',
-    change: '+$1,219',
-    percent: '+1.84%',
-    direction: 'up',
-    color: '#f3a847',
-    trend: [31, 35, 34, 40, 43, 46, 44, 51, 55, 58, 63, 69],
-  },
-]
-
 export const priceChart = {
   symbol: 'AAPL',
   company: 'Apple Inc.',
@@ -159,7 +116,6 @@ export const portfolioSummary = {
 }
 
 export const dashboardData = {
-  marketSummary,
   priceChart,
   technicalIndicators,
   watchlist,

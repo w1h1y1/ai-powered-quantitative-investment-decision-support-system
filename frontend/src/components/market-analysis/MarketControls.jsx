@@ -20,6 +20,19 @@ function validateCustomDates(dates, today) {
   return ''
 }
 
+function getIntervalValue(interval) {
+  return typeof interval === 'string' ? interval : interval.value
+}
+
+function getIntervalLabel(interval) {
+  return typeof interval === 'string' ? interval : interval.label
+}
+
+const chartTypeOptions = [
+  { label: 'Candlestick', value: 'candlestick' },
+  { label: 'Line', value: 'line' },
+]
+
 export default function MarketControls({
   stocks,
   selectedSymbol,
@@ -30,8 +43,12 @@ export default function MarketControls({
   intervals,
   selectedInterval,
   onIntervalChange,
+  chartType,
+  onChartTypeChange,
   customRange,
   onApplyCustomRange,
+  dataStatusLabel = 'Market Data API',
+  dataStatusDetail = 'Twelve Data OHLCV via Django',
 }) {
   const [isCustomOpen, setIsCustomOpen] = useState(false)
   const [draftDates, setDraftDates] = useState(() => customRange ?? createDefaultDates())
@@ -99,18 +116,22 @@ export default function MarketControls({
           <p>Equity research</p>
           <h2>Analyze price action and technical signals</h2>
         </div>
-        <div className="demo-data-status" aria-label="Demo data, last updated at 16:00">
-          <strong>Demo Data</strong>
-          <span>Last updated: 16:00</span>
+        <div className="market-data-status" aria-label={`${dataStatusLabel}, ${dataStatusDetail}`}>
+          <strong>{dataStatusLabel}</strong>
+          <span>{dataStatusDetail}</span>
         </div>
       </div>
 
       <div className="market-control-fields">
         <label className="stock-selector">
           <span>Stock</span>
-          <select value={selectedSymbol} onChange={(event) => onStockChange(event.target.value)}>
+          <select
+            value={selectedSymbol}
+            onChange={(event) => onStockChange(event.target.value)}
+            disabled={!stocks.length}
+          >
             {stocks.map((stock) => (
-              <option value={stock.symbol} key={stock.symbol}>{stock.symbol} · {stock.company}</option>
+              <option value={stock.symbol} key={stock.symbol}>{stock.symbol} - {stock.company}</option>
             ))}
           </select>
         </label>
@@ -140,7 +161,7 @@ export default function MarketControls({
           </div>
           {selectedRange === 'Custom' && customRange && (
             <output className="active-custom-range">
-              {customRange.startDate} – {customRange.endDate}
+              {customRange.startDate} - {customRange.endDate}
             </output>
           )}
         </div>
@@ -148,8 +169,18 @@ export default function MarketControls({
         <label className="bar-interval-control">
           <span>Bar interval</span>
           <select value={selectedInterval} onChange={(event) => onIntervalChange(event.target.value)}>
-            {intervals.map((interval) => (
-              <option value={interval} key={interval}>{interval}</option>
+            {intervals.map((interval) => {
+              const value = getIntervalValue(interval)
+              return <option value={value} key={value}>{getIntervalLabel(interval)}</option>
+            })}
+          </select>
+        </label>
+
+        <label className="chart-type-control">
+          <span>Chart type</span>
+          <select value={chartType} onChange={(event) => onChartTypeChange(event.target.value)}>
+            {chartTypeOptions.map((option) => (
+              <option value={option.value} key={option.value}>{option.label}</option>
             ))}
           </select>
         </label>
@@ -159,7 +190,6 @@ export default function MarketControls({
         <div className="custom-date-panel" id="custom-date-panel" aria-label="Custom date range">
           <div className="custom-date-copy">
             <strong>Custom time range</strong>
-            <span>Select a valid date range, then apply it to the chart.</span>
           </div>
 
           <div className="custom-date-fields">

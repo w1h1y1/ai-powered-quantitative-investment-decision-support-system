@@ -9,6 +9,8 @@ SAMPLE_SECURITIES = [
         'name': 'Apple',
         'asset_type': Security.AssetType.STOCK,
         'exchange': 'NASDAQ',
+        'mic_code': 'XNAS',
+        'country': 'United States',
         'currency': 'USD',
     },
     {
@@ -16,6 +18,8 @@ SAMPLE_SECURITIES = [
         'name': 'Microsoft',
         'asset_type': Security.AssetType.STOCK,
         'exchange': 'NASDAQ',
+        'mic_code': 'XNAS',
+        'country': 'United States',
         'currency': 'USD',
     },
     {
@@ -23,6 +27,8 @@ SAMPLE_SECURITIES = [
         'name': 'Amazon',
         'asset_type': Security.AssetType.STOCK,
         'exchange': 'NASDAQ',
+        'mic_code': 'XNAS',
+        'country': 'United States',
         'currency': 'USD',
     },
     {
@@ -30,6 +36,8 @@ SAMPLE_SECURITIES = [
         'name': 'SPDR S&P 500 ETF',
         'asset_type': Security.AssetType.ETF,
         'exchange': 'NYSEARCA',
+        'mic_code': 'ARCX',
+        'country': 'United States',
         'currency': 'USD',
     },
     {
@@ -37,6 +45,8 @@ SAMPLE_SECURITIES = [
         'name': 'Invesco QQQ ETF',
         'asset_type': Security.AssetType.ETF,
         'exchange': 'NASDAQ',
+        'mic_code': 'XNAS',
+        'country': 'United States',
         'currency': 'USD',
     },
 ]
@@ -55,13 +65,25 @@ class Command(BaseCommand):
                 'name': security_data['name'],
                 'asset_type': security_data['asset_type'],
                 'exchange': security_data['exchange'],
+                'mic_code': security_data['mic_code'],
+                'country': security_data['country'],
                 'currency': security_data['currency'],
                 'is_active': True,
             }
-            _, created = Security.objects.update_or_create(
-                symbol=symbol,
-                defaults=defaults,
+            security = (
+                Security.objects
+                .filter(symbol=symbol, mic_code=security_data['mic_code'])
+                .first()
+                or Security.objects.filter(symbol=symbol, mic_code='').first()
             )
+            created = security is None
+            if created:
+                Security.objects.create(symbol=symbol, **defaults)
+            else:
+                for field, value in defaults.items():
+                    setattr(security, field, value)
+                security.save(update_fields=[*defaults.keys(), 'updated_at'])
+
             if created:
                 created_count += 1
             else:

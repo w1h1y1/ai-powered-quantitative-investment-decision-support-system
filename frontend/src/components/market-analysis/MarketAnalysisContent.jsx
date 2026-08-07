@@ -1,5 +1,24 @@
-import { useMemo, useState } from 'react'
-import { getMarketHistory } from '../../data/marketAnalysisData'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  buildDashboardIndicators,
+  buildMarketDataRequestParams,
+  createDefaultCustomMarketDataRange,
+  dashboardMarketDataIntervals,
+  dashboardMarketDataRanges,
+  formatDashboardDateLabel,
+  getActiveSecurities,
+  getDefaultCustomMarketDataInterval,
+  getDefaultMarketDataInterval,
+  getTodayDateInputValue,
+  isCustomMarketDataRange,
+  marketDataResponseMatchesRequest,
+  normalizeDashboardVisibleWindow,
+  normalizeMarketData,
+  shouldApplyMarketDataResponse,
+  validateCustomMarketDataRange,
+} from '../dashboard/dashboardSecurityModel'
+import { marketDataApi } from '../../services/marketDataApi'
+import { securityApi } from '../../services/securityApi'
 import IndicatorOverlayControls from './IndicatorOverlayControls'
 import MacdChart from './MacdChart'
 import MarketControls from './MarketControls'
@@ -8,102 +27,335 @@ import RsiChart from './RsiChart'
 import TechnicalSummary from './TechnicalSummary'
 import VolumeChart from './VolumeChart'
 
-const dayInMilliseconds = 86400000
+const marketOverlayOptions = [
+  { id: 'ma5', label: 'MA5', fullName: 'Moving Average 5', type: 'ma', period: 5 },
+  { id: 'ma10', label: 'MA10', fullName: 'Moving Average 10', type: 'ma', period: 10 },
+  { id: 'ma20', label: 'MA20', fullName: 'Moving Average 20', type: 'ma', period: 20 },
+  { id: 'ema12', label: 'EMA12', fullName: 'Exponential Moving Average 12', type: 'ema', period: 12 },
+  {
+    id: 'bollinger20',
+    label: 'Bollinger',
+    legendLabel: 'Bollinger Bands (20, 2)',
+    fullName: 'Bollinger Bands (20, 2)',
+    type: 'bollinger',
+    period: 20,
+  },
+]
 
-function parseIsoDate(value) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value ?? '')
-  if (!match) return null
-
-  const year = Number(match[1])
-  const month = Number(match[2])
-  const day = Number(match[3])
-  const timestamp = Date.UTC(year, month - 1, day)
-  const date = new Date(timestamp)
-
-  if (
-    date.getUTCFullYear() !== year ||
-    date.getUTCMonth() !== month - 1 ||
-    date.getUTCDate() !== day
-  ) return null
-
-  return timestamp
+function normalizeSymbol(value) {
+  return String(value ?? '').trim().toUpperCase()
 }
 
-function addUtcMonthsClamped(timestamp, months) {
-  const date = new Date(timestamp)
-  const firstOfTargetMonth = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1))
-  const lastDayOfTargetMonth = new Date(Date.UTC(
-    firstOfTargetMonth.getUTCFullYear(),
-    firstOfTargetMonth.getUTCMonth() + 1,
-    0,
-  )).getUTCDate()
+function getErrorMessage(error, fallback) {
+  return error?.message || fallback
+}
 
-  return Date.UTC(
-    firstOfTargetMonth.getUTCFullYear(),
-    firstOfTargetMonth.getUTCMonth(),
-    Math.min(date.getUTCDate(), lastDayOfTargetMonth),
+function buildMarketAnalysisStock(security) {
+  return {
+    id: security.id,
+    symbol: security.symbol,
+    company: security.name,
+    exchange: security.exchange,
+    currency: security.currency,
+    stats: {
+      marketCap: 'N/A',
+    },
+  }
+}
+
+function getCandleTimestamp(candle) {
+  const timestamp = Date.parse(candle?.date)
+  return Number.isFinite(timestamp) ? timestamp : null
+}
+
+function buildMarketAnalysisCandle(candle, index) {
+  return {
+    id: `${candle.date || 'candle'}-${index}`,
+    timestamp: getCandleTimestamp(candle) ?? index,
+    date: candle.date,
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+    volume: candle.volume,
+  }
+}
+
+function buildMarketAnalysisLabels(candles, range, interval) {
+  const labelCount = Math.min(5, candles.length)
+  return labelCount > 1
+    ? Array.from({ length: labelCount }, (_, index) => {
+      const candleIndex = Math.round((index / (labelCount - 1)) * (candles.length - 1))
+      return formatDashboardDateLabel(candles[candleIndex]?.date, interval, range)
+    })
+    : []
+}
+
+function buildMarketAnalysisHistory(marketData, range, interval) {
+  const sourceCandles = marketData?.visibleData ?? marketData?.candles ?? []
+  const warmupCandles = marketData?.warmupCandles ?? []
+  const candles = sourceCandles.map(buildMarketAnalysisCandle)
+  const normalizedWarmupCandles = warmupCandles.map(buildMarketAnalysisCandle)
+  const effectiveInterval = marketData?.interval ?? interval
+  const indicators = buildDashboardIndicators(candles, normalizedWarmupCandles)
+
+  return {
+    candles,
+    indicators,
+    labels: buildMarketAnalysisLabels(candles, range, effectiveInterval),
+    opens: candles.map((candle) => candle.open),
+    highs: candles.map((candle) => candle.high),
+    lows: candles.map((candle) => candle.low),
+    closes: candles.map((candle) => candle.close),
+    volumes: candles.map((candle) => candle.volume),
+  }
+}
+
+function sliceMarketAnalysisHistory(history, window, range, interval) {
+  const candles = history.candles.slice(window.start, window.end + 1)
+  const indicators = history.indicators.slice(window.start, window.end + 1)
+
+  return {
+    candles,
+    indicators,
+    labels: buildMarketAnalysisLabels(candles, range, interval),
+    opens: candles.map((candle) => candle.open),
+    highs: candles.map((candle) => candle.high),
+    lows: candles.map((candle) => candle.low),
+    closes: candles.map((candle) => candle.close),
+    volumes: candles.map((candle) => candle.volume),
+  }
+}
+
+function MarketAnalysisState({ actionLabel, children, onAction, tone = '' }) {
+  return (
+    <section className={`market-panel market-analysis-state ${tone}`.trim()} aria-live="polite">
+      <p>{children}</p>
+      {actionLabel && onAction && (
+        <button type="button" onClick={onAction}>{actionLabel}</button>
+      )}
+    </section>
   )
-}
-
-export function getCustomDefaultInterval(startDate, endDate) {
-  const start = parseIsoDate(startDate)
-  const end = parseIsoDate(endDate)
-  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) return '1D'
-
-  const spanDays = (end - start) / dayInMilliseconds
-  if (spanDays <= 2) return '30m'
-  if (spanDays <= 14) return '1H'
-  if (end <= addUtcMonthsClamped(start, 6)) return '1D'
-  if (end <= addUtcMonthsClamped(start, 24)) return '1W'
-  return '1M'
 }
 
 export default function MarketAnalysisContent({
-  stocks,
-  ranges,
-  intervals,
-  defaultIntervals,
-  overlayOptions,
   selectedSymbol,
   onSelectedSymbolChange,
 }) {
-  const [selectedRange, setSelectedRange] = useState('1D')
-  const [selectedInterval, setSelectedInterval] = useState(defaultIntervals['1D'])
-  const [customRange, setCustomRange] = useState(null)
+  const [securities, setSecurities] = useState([])
+  const [isSecurityLoading, setIsSecurityLoading] = useState(true)
+  const [securityError, setSecurityError] = useState('')
+  const [selectedRange, setSelectedRange] = useState(dashboardMarketDataRanges[0])
+  const [selectedInterval, setSelectedInterval] = useState(getDefaultMarketDataInterval(dashboardMarketDataRanges[0]))
+  const [customRange, setCustomRange] = useState(() => createDefaultCustomMarketDataRange())
+  const [marketData, setMarketData] = useState(null)
+  const [isMarketDataLoading, setIsMarketDataLoading] = useState(false)
+  const [marketDataError, setMarketDataError] = useState('')
+  const [marketDataReloadKey, setMarketDataReloadKey] = useState(0)
   const [selectedOverlays, setSelectedOverlays] = useState(['ma5', 'ma10', 'ma20'])
+  const [chartType, setChartType] = useState('candlestick')
+  const [priceVisibleWindow, setPriceVisibleWindow] = useState(null)
+  const [rsiVisibleWindow, setRsiVisibleWindow] = useState(null)
+  const [volumeVisibleWindow, setVolumeVisibleWindow] = useState(null)
+  const [macdVisibleWindow, setMacdVisibleWindow] = useState(null)
+  const securityRequestIdRef = useRef(0)
+  const marketDataRequestIdRef = useRef(0)
 
-  const selectedStock = useMemo(
-    () => stocks.find((stock) => stock.symbol === selectedSymbol) ?? stocks[0],
-    [selectedSymbol, stocks],
-  )
+  const loadSecurities = useCallback(() => {
+    const requestId = securityRequestIdRef.current + 1
+    securityRequestIdRef.current = requestId
+    setIsSecurityLoading(true)
+    setSecurityError('')
 
-  const chartSelection = useMemo(() => ({
-    symbol: selectedStock.symbol,
-    range: selectedRange,
-    interval: selectedInterval,
-    customRange: selectedRange === 'Custom' ? customRange : null,
-  }), [customRange, selectedInterval, selectedRange, selectedStock.symbol])
+    securityApi.list()
+      .then((response) => {
+        if (securityRequestIdRef.current !== requestId) return
+        setSecurities(getActiveSecurities(response))
+      })
+      .catch((error) => {
+        if (securityRequestIdRef.current !== requestId) return
+        setSecurities([])
+        setSecurityError(getErrorMessage(error, 'Unable to load securities.'))
+      })
+      .finally(() => {
+        if (securityRequestIdRef.current === requestId) {
+          setIsSecurityLoading(false)
+        }
+      })
+  }, [])
+
+  useEffect(() => {
+    loadSecurities()
+  }, [loadSecurities])
+
+  const requestedSymbol = normalizeSymbol(selectedSymbol)
+  const selectedSecurity = useMemo(() => {
+    if (!securities.length) return null
+    if (requestedSymbol) {
+      return securities.find((security) => security.symbol === requestedSymbol) ?? null
+    }
+    return securities[0]
+  }, [requestedSymbol, securities])
+  const controlSecurity = selectedSecurity ?? securities[0] ?? null
+  const controlSelectedSymbol = selectedSecurity?.symbol ?? requestedSymbol
+  const selectedStock = selectedSecurity ? buildMarketAnalysisStock(selectedSecurity) : null
+  const controlStocks = useMemo(() => securities.map(buildMarketAnalysisStock), [securities])
+
+  useEffect(() => {
+    if (!selectedSecurity) return
+    if (selectedSecurity.symbol !== requestedSymbol) {
+      onSelectedSymbolChange(selectedSecurity.symbol)
+    }
+  }, [onSelectedSymbolChange, requestedSymbol, selectedSecurity])
+
+  useEffect(() => {
+    if (!selectedSecurity) {
+      setMarketData(null)
+      setMarketDataError('')
+      setIsMarketDataLoading(false)
+      return undefined
+    }
+
+    const effectiveCustomRange = isCustomMarketDataRange(selectedRange)
+      ? { ...customRange, interval: selectedInterval }
+      : customRange
+    const validationError = isCustomMarketDataRange(selectedRange)
+      ? validateCustomMarketDataRange(effectiveCustomRange, getTodayDateInputValue())
+      : ''
+
+    if (validationError) {
+      setMarketData(null)
+      setMarketDataError(validationError)
+      setIsMarketDataLoading(false)
+      return undefined
+    }
+
+    const requestParams = buildMarketDataRequestParams({
+      security: selectedSecurity,
+      range: selectedRange,
+      customRange: effectiveCustomRange,
+      interval: selectedInterval,
+    })
+    const requestId = marketDataRequestIdRef.current + 1
+    let ignore = false
+    marketDataRequestIdRef.current = requestId
+
+    setIsMarketDataLoading(true)
+    setMarketDataError('')
+
+    marketDataApi.daily(requestParams)
+      .then((response) => {
+        if (ignore || !shouldApplyMarketDataResponse(marketDataRequestIdRef.current, requestId)) return
+        if (!marketDataResponseMatchesRequest(response, requestParams)) {
+          throw new Error('Market data response did not match the selected stock and time range.')
+        }
+        setMarketData(normalizeMarketData(response))
+      })
+      .catch((error) => {
+        if (ignore || !shouldApplyMarketDataResponse(marketDataRequestIdRef.current, requestId)) return
+        setMarketData(null)
+        setMarketDataError(getErrorMessage(error, 'Unable to load market data.'))
+      })
+      .finally(() => {
+        if (!ignore && shouldApplyMarketDataResponse(marketDataRequestIdRef.current, requestId)) {
+          setIsMarketDataLoading(false)
+        }
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [customRange, marketDataReloadKey, selectedInterval, selectedRange, selectedSecurity])
 
   const selectedHistory = useMemo(
-    () => getMarketHistory(selectedStock, chartSelection),
-    [chartSelection, selectedStock],
+    () => buildMarketAnalysisHistory(marketData, selectedRange, selectedInterval),
+    [marketData, selectedInterval, selectedRange],
   )
-
+  const marketDataKey = [
+    selectedSecurity?.id ?? '',
+    selectedRange,
+    selectedInterval,
+    marketData?.metadata?.firstDatetime ?? '',
+    marketData?.metadata?.lastDatetime ?? '',
+    marketData?.metadata?.count ?? 0,
+  ].join('|')
+  const normalizedPriceVisibleWindow = normalizeDashboardVisibleWindow(priceVisibleWindow, selectedHistory.candles.length)
+  const normalizedRsiVisibleWindow = normalizeDashboardVisibleWindow(rsiVisibleWindow, selectedHistory.candles.length)
+  const normalizedVolumeVisibleWindow = normalizeDashboardVisibleWindow(volumeVisibleWindow, selectedHistory.candles.length)
+  const normalizedMacdVisibleWindow = normalizeDashboardVisibleWindow(macdVisibleWindow, selectedHistory.candles.length)
+  const displayedHistory = useMemo(
+    () => sliceMarketAnalysisHistory(selectedHistory, normalizedPriceVisibleWindow, selectedRange, selectedInterval),
+    [
+      normalizedPriceVisibleWindow.end,
+      normalizedPriceVisibleWindow.start,
+      selectedHistory,
+      selectedInterval,
+      selectedRange,
+    ],
+  )
+  const rsiHistory = useMemo(
+    () => sliceMarketAnalysisHistory(selectedHistory, normalizedRsiVisibleWindow, selectedRange, selectedInterval),
+    [
+      normalizedRsiVisibleWindow.end,
+      normalizedRsiVisibleWindow.start,
+      selectedHistory,
+      selectedInterval,
+      selectedRange,
+    ],
+  )
+  const volumeHistory = useMemo(
+    () => sliceMarketAnalysisHistory(selectedHistory, normalizedVolumeVisibleWindow, selectedRange, selectedInterval),
+    [
+      normalizedVolumeVisibleWindow.end,
+      normalizedVolumeVisibleWindow.start,
+      selectedHistory,
+      selectedInterval,
+      selectedRange,
+    ],
+  )
+  const macdHistory = useMemo(
+    () => sliceMarketAnalysisHistory(selectedHistory, normalizedMacdVisibleWindow, selectedRange, selectedInterval),
+    [
+      normalizedMacdVisibleWindow.end,
+      normalizedMacdVisibleWindow.start,
+      selectedHistory,
+      selectedInterval,
+      selectedRange,
+    ],
+  )
   const rangeLabel = selectedRange === 'Custom' && customRange
-    ? `${customRange.startDate} – ${customRange.endDate}`
+    ? `${customRange.startDate} - ${customRange.endDate}`
     : selectedRange
-  const chartTimeframeLabel = `${rangeLabel} · ${selectedInterval} bars`
+  const chartTimeframeLabel = `${rangeLabel} - ${selectedInterval} bars`
+  const hasChartData = selectedHistory.candles.length > 1
+
+  useEffect(() => {
+    setPriceVisibleWindow(null)
+    setRsiVisibleWindow(null)
+    setVolumeVisibleWindow(null)
+    setMacdVisibleWindow(null)
+  }, [marketDataKey])
 
   const handleRangeChange = (nextRange) => {
     if (nextRange === selectedRange) return
     setSelectedRange(nextRange)
-    setSelectedInterval(defaultIntervals[nextRange] ?? selectedInterval)
+    setSelectedInterval(getDefaultMarketDataInterval(nextRange))
   }
 
   const handleCustomRangeApply = (dates) => {
-    setCustomRange(dates)
+    const interval = getDefaultCustomMarketDataInterval(dates.startDate, dates.endDate)
+    setCustomRange({ ...dates, interval })
     setSelectedRange('Custom')
-    setSelectedInterval(getCustomDefaultInterval(dates.startDate, dates.endDate))
+    setSelectedInterval(interval)
+  }
+
+  const handleIntervalChange = (nextInterval) => {
+    setSelectedInterval(nextInterval)
+    setCustomRange((current) => ({ ...current, interval: nextInterval }))
+  }
+
+  const retryMarketData = () => {
+    setMarketDataReloadKey((current) => current + 1)
   }
 
   const toggleOverlay = (overlayId) => {
@@ -122,39 +374,115 @@ export default function MarketAnalysisContent({
       data-chart-start={selectedRange === 'Custom' ? customRange?.startDate : undefined}
       data-chart-end={selectedRange === 'Custom' ? customRange?.endDate : undefined}
     >
-      <MarketControls
-        stocks={stocks}
-        selectedSymbol={selectedStock.symbol}
-        onStockChange={onSelectedSymbolChange}
-        ranges={ranges}
-        selectedRange={selectedRange}
-        onRangeChange={handleRangeChange}
-        intervals={intervals}
-        selectedInterval={selectedInterval}
-        onIntervalChange={setSelectedInterval}
-        customRange={customRange}
-        onApplyCustomRange={handleCustomRangeApply}
-      />
+      {controlSecurity && (
+        <MarketControls
+          stocks={controlStocks}
+          selectedSymbol={controlSelectedSymbol}
+          onStockChange={onSelectedSymbolChange}
+          ranges={dashboardMarketDataRanges}
+          selectedRange={selectedRange}
+          onRangeChange={handleRangeChange}
+          intervals={dashboardMarketDataIntervals}
+          selectedInterval={selectedInterval}
+          onIntervalChange={handleIntervalChange}
+          chartType={chartType}
+          onChartTypeChange={setChartType}
+          customRange={customRange}
+          onApplyCustomRange={handleCustomRangeApply}
+          dataStatusLabel="Market Data API"
+          dataStatusDetail={
+            isMarketDataLoading
+              ? 'Loading Twelve Data OHLCV...'
+              : marketData?.isStale
+                ? 'Cached Twelve Data OHLCV via Django'
+                : 'Twelve Data OHLCV via Django'
+          }
+        />
+      )}
 
       <div className="market-analysis-grid">
-        <MarketPriceChart
-          stock={selectedStock}
-          history={selectedHistory}
-          rangeLabel={rangeLabel}
-          interval={selectedInterval}
-          overlayOptions={overlayOptions}
-          selectedOverlays={selectedOverlays}
-        />
-        <IndicatorOverlayControls
-          history={selectedHistory}
-          options={overlayOptions}
-          selectedOverlays={selectedOverlays}
-          onToggle={toggleOverlay}
-        />
-        <RsiChart stock={selectedStock} history={selectedHistory} timeframeLabel={chartTimeframeLabel} />
-        <TechnicalSummary history={selectedHistory} />
-        <VolumeChart stock={selectedStock} history={selectedHistory} rangeLabel={rangeLabel} interval={selectedInterval} />
-        <MacdChart stock={selectedStock} history={selectedHistory} timeframeLabel={chartTimeframeLabel} />
+        {isSecurityLoading && (
+          <MarketAnalysisState>Loading available stocks from the Securities API...</MarketAnalysisState>
+        )}
+        {!isSecurityLoading && securityError && (
+          <MarketAnalysisState actionLabel="Retry" onAction={loadSecurities} tone="is-error">
+            {securityError}
+          </MarketAnalysisState>
+        )}
+        {!isSecurityLoading && !securityError && securities.length === 0 && (
+          <MarketAnalysisState>No active stocks are available from the Securities API.</MarketAnalysisState>
+        )}
+        {!isSecurityLoading && !securityError && requestedSymbol && !selectedSecurity && (
+          <MarketAnalysisState tone="is-error">
+            {requestedSymbol} is not available in the current Securities API response.
+          </MarketAnalysisState>
+        )}
+        {selectedSecurity && isMarketDataLoading && (
+          <MarketAnalysisState>Loading real OHLCV data for {selectedSecurity.symbol}...</MarketAnalysisState>
+        )}
+        {selectedSecurity && !isMarketDataLoading && marketDataError && (
+          <MarketAnalysisState actionLabel="Retry" onAction={retryMarketData} tone="is-error">
+            {marketDataError}
+          </MarketAnalysisState>
+        )}
+        {selectedSecurity && !isMarketDataLoading && !marketDataError && !hasChartData && (
+          <MarketAnalysisState>
+            No usable OHLCV data returned for {selectedSecurity.symbol} and the selected time range.
+          </MarketAnalysisState>
+        )}
+
+        {selectedStock && !isMarketDataLoading && !marketDataError && hasChartData && (
+          <>
+            <MarketPriceChart
+              stock={selectedStock}
+              history={displayedHistory}
+              rangeLabel={rangeLabel}
+              interval={selectedInterval}
+              overlayOptions={marketOverlayOptions}
+              selectedOverlays={selectedOverlays}
+              chartType={chartType}
+              fullCandleCount={selectedHistory.candles.length}
+              visibleWindow={normalizedPriceVisibleWindow}
+              onVisibleWindowChange={setPriceVisibleWindow}
+              onVisibleWindowReset={() => setPriceVisibleWindow(null)}
+            />
+            <IndicatorOverlayControls
+              history={displayedHistory}
+              options={marketOverlayOptions}
+              selectedOverlays={selectedOverlays}
+              onToggle={toggleOverlay}
+            />
+            <RsiChart
+              stock={selectedStock}
+              history={rsiHistory}
+              timeframeLabel={chartTimeframeLabel}
+              fullCandleCount={selectedHistory.candles.length}
+              visibleWindow={normalizedRsiVisibleWindow}
+              onVisibleWindowChange={setRsiVisibleWindow}
+              onVisibleWindowReset={() => setRsiVisibleWindow(null)}
+            />
+            <TechnicalSummary history={displayedHistory} />
+            <VolumeChart
+              stock={selectedStock}
+              history={volumeHistory}
+              rangeLabel={rangeLabel}
+              interval={selectedInterval}
+              fullCandleCount={selectedHistory.candles.length}
+              visibleWindow={normalizedVolumeVisibleWindow}
+              onVisibleWindowChange={setVolumeVisibleWindow}
+              onVisibleWindowReset={() => setVolumeVisibleWindow(null)}
+            />
+            <MacdChart
+              stock={selectedStock}
+              history={macdHistory}
+              timeframeLabel={chartTimeframeLabel}
+              fullCandleCount={selectedHistory.candles.length}
+              visibleWindow={normalizedMacdVisibleWindow}
+              onVisibleWindowChange={setMacdVisibleWindow}
+              onVisibleWindowReset={() => setMacdVisibleWindow(null)}
+            />
+          </>
+        )}
       </div>
     </main>
   )

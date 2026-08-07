@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --test src/components/portfolio/tradeWorkflow.test.js src/components/portfolio/portfolioSummaryModel.test.js src/components/dashboard/dashboardSecurityModel.test.js",
+    "test": "node --test src/components/portfolio/tradeWorkflow.test.js src/components/portfolio/portfolioSummaryModel.test.js src/components/dashboard/dashboardSecurityModel.test.js src/data/backtestData.test.js src/data/marketAnalysisData.test.js src/services/watchlistDataService.test.js",
     "preview": "vite preview"
   },
   "dependencies": {

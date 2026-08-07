@@ -82,7 +82,7 @@ export default function BacktestHistory({ history, onReopen, onDelete }) {
         <div>
           <p>Saved simulations</p>
           <h2 id="backtest-history-title">Backtest History</h2>
-          <span>Reopen or remove the latest completed mock backtests.</span>
+          <span>Reopen or remove the latest completed real historical-data backtests saved in this browser.</span>
         </div>
         <strong className="backtest-record-count">{history.length} saved</strong>
       </div>
@@ -111,7 +111,7 @@ export default function BacktestHistory({ history, onReopen, onDelete }) {
                     </span>
                   </td>
                   <td data-label="Strategy">{result.strategy.label}</td>
-                  <td data-label="Date Range">{formatDate(result.config.startDate)} – {formatDate(result.config.endDate)}</td>
+                  <td data-label="Date Range">{formatDate(result.config.startDate)} - {formatDate(result.config.endDate)}</td>
                   <td data-label="Total Return">
                     <strong className={result.metrics.totalReturn >= 0 ? 'is-positive' : 'is-negative'}>
                       {formatSignedPercentage(result.metrics.totalReturn)}
@@ -139,7 +139,7 @@ export default function BacktestHistory({ history, onReopen, onDelete }) {
       ) : (
         <div className="backtest-history-empty">
           <strong>No saved backtests yet.</strong>
-          <span>Completed simulations will appear here and remain available after refresh.</span>
+          <span>Completed real backtests will appear here and remain available after refresh.</span>
         </div>
       )}
 

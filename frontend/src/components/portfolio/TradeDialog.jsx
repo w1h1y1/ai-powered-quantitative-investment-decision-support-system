@@ -1,10 +1,48 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { securityApi } from '../../services/securityApi'
 import { formatQuantity } from './portfolioMath'
 import { buildTradeEstimate, validateTradeFields } from './tradeWorkflow'
 
 function toDateTimeLocalValue(date = new Date()) {
   const timezoneOffset = date.getTimezoneOffset() * 60000
   return new Date(date.getTime() - timezoneOffset).toISOString().slice(0, 16)
+}
+
+function normalizeSearchResult(result, searchQuery) {
+  if (!result) return null
+  return {
+    id: result.id ?? null,
+    symbol: String(result.symbol ?? '').trim().toUpperCase(),
+    name: String(result.name ?? '').trim(),
+    exchange: String(result.exchange ?? '').trim(),
+    mic_code: String(result.mic_code ?? '').trim().toUpperCase(),
+    instrument_type: String(result.instrument_type ?? result.type ?? '').trim(),
+    country: String(result.country ?? '').trim(),
+    currency: String(result.currency ?? 'USD').trim().toUpperCase(),
+    is_local: result.is_local === true || Boolean(result.id),
+    is_preferred: result.is_preferred === true,
+    search_query: searchQuery,
+  }
+}
+
+function normalizeLocalSecurityResult(security) {
+  if (!security) return null
+  return normalizeSearchResult({
+    id: security.id,
+    symbol: security.symbol,
+    name: security.name,
+    exchange: security.exchange,
+    mic_code: security.mic_code,
+    instrument_type: security.instrument_type || security.type,
+    country: security.country,
+    currency: security.currency,
+    is_local: true,
+  }, security.symbol)
+}
+
+function getSearchErrorMessage(error) {
+  if (error?.status === 429) return 'Market data provider rate limit reached. Please try again later.'
+  return error?.message || 'Security search failed. Please try again.'
 }
 
 export default function TradeDialog({
@@ -18,10 +56,21 @@ export default function TradeDialog({
   transactionType = 'BUY',
 }) {
   const isSellMode = transactionType === 'SELL'
-  const initialSecurityId = isSellMode && holding
-    ? String(holding.securityId)
-    : securities[0] ? String(securities[0].id) : ''
-  const [selectedSecurityId, setSelectedSecurityId] = useState(initialSecurityId)
+  const sellableHoldings = useMemo(
+    () => holdings.filter((item) => Number(item.quantity) > 0),
+    [holdings],
+  )
+  const initialBuySecurity = !isSellMode && securities[0] ? normalizeLocalSecurityResult(securities[0]) : null
+  const initialSellSecurityId = isSellMode
+    ? String(holding?.securityId ?? sellableHoldings[0]?.securityId ?? '')
+    : ''
+  const [selectedSecurityId, setSelectedSecurityId] = useState(initialSellSecurityId)
+  const [securityQuery, setSecurityQuery] = useState(initialBuySecurity?.symbol ?? '')
+  const [selectedSearchResult, setSelectedSearchResult] = useState(initialBuySecurity)
+  const [securitySearchResults, setSecuritySearchResults] = useState(initialBuySecurity ? [initialBuySecurity] : [])
+  const [securitySearchLoading, setSecuritySearchLoading] = useState(false)
+  const [securitySearchError, setSecuritySearchError] = useState('')
+  const [hasSearchedSecurity, setHasSearchedSecurity] = useState(false)
   const [quantity, setQuantity] = useState('')
   const [price, setPrice] = useState('')
   const [transactionDate, setTransactionDate] = useState(toDateTimeLocalValue())
@@ -29,6 +78,7 @@ export default function TradeDialog({
   const [notes, setNotes] = useState('')
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState({})
+  const searchRequestIdRef = useRef(0)
   const securitySelectRef = useRef(null)
   const quantityInputRef = useRef(null)
   const priceInputRef = useRef(null)
@@ -37,17 +87,24 @@ export default function TradeDialog({
   const dialogRef = useRef(null)
   const submitLockRef = useRef(false)
 
-  const selectedSecurityFromList = securities.find((security) => String(security.id) === selectedSecurityId)
-  const selectedSecurity = selectedSecurityFromList ?? (holding ? {
-    id: holding.securityId,
-    symbol: holding.symbol,
-    name: holding.asset,
-    type: holding.type,
-  } : null)
   const selectedHolding = useMemo(
-    () => holding ?? holdings.find((item) => String(item.securityId) === selectedSecurityId),
+    () => holdings.find((item) => String(item.securityId) === selectedSecurityId) ?? holding,
     [holding, holdings, selectedSecurityId],
   )
+  const selectedSecurity = isSellMode
+    ? (selectedHolding ? {
+      id: selectedHolding.securityId,
+      symbol: selectedHolding.symbol,
+      name: selectedHolding.asset,
+      type: selectedHolding.type,
+    } : null)
+    : selectedSearchResult ? {
+      id: selectedSearchResult.id,
+      symbol: selectedSearchResult.symbol,
+      name: selectedSearchResult.name,
+      type: selectedSearchResult.instrument_type || 'Security',
+      exchange: selectedSearchResult.exchange,
+    } : null
   const availableQuantity = selectedHolding?.quantity ?? 0
   const dialogTitle = isSellMode ? 'Sell Security' : 'Buy Security'
   const estimateLabel = isSellMode ? 'Estimated proceeds' : 'Estimated total'
@@ -62,7 +119,8 @@ export default function TradeDialog({
   const getTradeValues = (overrides = {}) => ({
     availableQuantity: isSellMode ? availableQuantity : undefined,
     portfolioId: portfolio?.id,
-    securityId: selectedSecurity?.id,
+    securityId: selectedSecurity?.id || undefined,
+    securitySubmission: !isSellMode && !selectedSearchResult?.id ? selectedSearchResult : undefined,
     transactionType,
     quantity,
     price,
@@ -95,20 +153,102 @@ export default function TradeDialog({
     setError('')
   }
 
+  const updateSecurityQuery = (value) => {
+    setSecurityQuery(value)
+    setSecuritySearchError('')
+    setError('')
+    if (selectedSearchResult && value.trim().toUpperCase() !== selectedSearchResult.symbol) {
+      setSelectedSearchResult(null)
+      setSelectedSecurityId('')
+    }
+    updateFieldError('security', {
+      ...getTradeValues(),
+      securityId: undefined,
+      securitySubmission: undefined,
+    })
+  }
+
+  const selectSearchResult = (result) => {
+    setSelectedSearchResult(result)
+    setSelectedSecurityId(result.id ? String(result.id) : '')
+    setSecurityQuery(result.symbol)
+    setSecuritySearchError('')
+    setError('')
+    updateFieldError('security', {
+      ...getTradeValues(),
+      securityId: result.id || undefined,
+      securitySubmission: result.id ? undefined : result,
+    })
+    quantityInputRef.current?.focus()
+  }
+
   const tradeValues = getTradeValues()
   const tradeEstimate = buildTradeEstimate(tradeValues)
+  const normalizedSecurityQuery = securityQuery.trim()
+  const canSearchSecurity = !isSellMode && normalizedSecurityQuery.length >= 2
+
+  useEffect(() => {
+    if (isSellMode) return undefined
+
+    if (!canSearchSecurity) {
+      setSecuritySearchResults([])
+      setSecuritySearchLoading(false)
+      setSecuritySearchError('')
+      setHasSearchedSecurity(false)
+      return undefined
+    }
+
+    if (selectedSearchResult && normalizedSecurityQuery.toUpperCase() === selectedSearchResult.symbol) {
+      setSecuritySearchResults([selectedSearchResult])
+      setSecuritySearchLoading(false)
+      setSecuritySearchError('')
+      setHasSearchedSecurity(true)
+      return undefined
+    }
+
+    const requestId = searchRequestIdRef.current + 1
+    searchRequestIdRef.current = requestId
+    setSecuritySearchLoading(true)
+    setSecuritySearchError('')
+    setHasSearchedSecurity(false)
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const payload = await securityApi.search(normalizedSecurityQuery)
+        if (searchRequestIdRef.current !== requestId) return
+
+        const items = Array.isArray(payload?.items) ? payload.items : []
+        setSecuritySearchResults(items.map((item) => normalizeSearchResult(item, normalizedSecurityQuery)).filter(Boolean))
+        setSecuritySearchError(payload?.metadata?.remote_error || '')
+        setHasSearchedSecurity(true)
+      } catch (searchError) {
+        if (searchRequestIdRef.current !== requestId) return
+        setSecuritySearchResults([])
+        setSecuritySearchError(getSearchErrorMessage(searchError))
+        setHasSearchedSecurity(true)
+      } finally {
+        if (searchRequestIdRef.current === requestId) setSecuritySearchLoading(false)
+      }
+    }, 450)
+
+    return () => window.clearTimeout(timer)
+  }, [canSearchSecurity, isSellMode, normalizedSecurityQuery, selectedSearchResult])
 
   useEffect(() => {
     const previouslyFocusedElement = document.activeElement
     const previousBodyOverflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
-    quantityInputRef.current?.focus()
+    if (isSellMode) {
+      quantityInputRef.current?.focus()
+    } else {
+      securitySelectRef.current?.focus()
+    }
 
     return () => {
       document.body.style.overflow = previousBodyOverflow
       previouslyFocusedElement?.focus()
     }
-  }, [])
+  }, [isSellMode])
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -189,16 +329,7 @@ export default function TradeDialog({
             <b>{portfolio?.base_currency || 'USD'}</b>
           </div>
 
-          {isSellMode && selectedSecurity ? (
-            <div className="portfolio-dialog-asset-summary is-readonly-security" aria-label="Security being sold">
-              <span>{selectedSecurity.symbol}</span>
-              <div>
-                <strong>{selectedSecurity.name || selectedSecurity.symbol}</strong>
-                <small>{selectedSecurity.type || 'Security'} - read-only sell target</small>
-              </div>
-              <b>{formatQuantity(availableQuantity)}</b>
-            </div>
-          ) : (
+          {isSellMode ? (
             <label className="portfolio-dialog-single-field">
               <span>Security</span>
               <select
@@ -211,13 +342,13 @@ export default function TradeDialog({
                     securityId: Number(event.target.value),
                   })
                 }}
-                disabled={!securities.length || isSubmitting}
+                disabled={!sellableHoldings.length || isSubmitting}
                 aria-invalid={fieldErrors.security ? 'true' : 'false'}
                 aria-describedby={fieldErrors.security ? 'trade-security-error' : undefined}
               >
-                {securities.map((security) => (
-                  <option value={security.id} key={security.id}>
-                    {security.symbol} - {security.name} ({security.type})
+                {sellableHoldings.map((sellableHolding) => (
+                  <option value={sellableHolding.securityId} key={sellableHolding.id ?? sellableHolding.securityId}>
+                    {sellableHolding.symbol} - {sellableHolding.asset} - Available {formatQuantity(sellableHolding.quantity)}
                   </option>
                 ))}
               </select>
@@ -227,6 +358,74 @@ export default function TradeDialog({
                 </small>
               )}
             </label>
+          ) : (
+            <div className="portfolio-dialog-single-field">
+              <label htmlFor="trade-security-search">
+                <span>Security</span>
+                <input
+                  ref={securitySelectRef}
+                  id="trade-security-search"
+                  type="search"
+                  autoComplete="off"
+                  value={securityQuery}
+                  onChange={(event) => updateSecurityQuery(event.target.value)}
+                  placeholder="Search symbol or company"
+                  disabled={isSubmitting}
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-controls="trade-security-search-results"
+                  aria-expanded={Boolean(canSearchSecurity && securitySearchResults.length)}
+                  aria-invalid={fieldErrors.security ? 'true' : 'false'}
+                  aria-describedby={fieldErrors.security ? 'trade-security-error' : undefined}
+                />
+              </label>
+
+              <div className="portfolio-security-search-results" id="trade-security-search-results">
+                {securitySearchLoading ? (
+                  <p>Searching securities...</p>
+                ) : securitySearchError && !securitySearchResults.length ? (
+                  <p>{securitySearchError}</p>
+                ) : securitySearchResults.length ? (
+                  <ul>
+                    {securitySearchResults.map((result) => {
+                      const isSelected = selectedSearchResult
+                        && selectedSearchResult.symbol === result.symbol
+                        && (selectedSearchResult.mic_code || selectedSearchResult.exchange)
+                          === (result.mic_code || result.exchange)
+                      return (
+                        <li key={`${result.symbol}-${result.mic_code || result.exchange || 'remote'}`}>
+                          <button
+                            type="button"
+                            className={isSelected ? 'is-selected' : ''}
+                            onClick={() => selectSearchResult(result)}
+                            disabled={isSubmitting}
+                          >
+                            <strong>{result.symbol}</strong>
+                            <span>{result.name || result.symbol}</span>
+                            <small>
+                              {[result.exchange, result.instrument_type]
+                                .filter(Boolean)
+                                .join(' - ')}
+                            </small>
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                ) : hasSearchedSecurity ? (
+                  <p>No matching securities found.</p>
+                ) : (
+                  <p>Type at least 2 characters to search symbols and company names.</p>
+                )}
+                {securitySearchError && securitySearchResults.length ? <p>{securitySearchError}</p> : null}
+              </div>
+
+              {fieldErrors.security && (
+                <small className="portfolio-dialog-field-error" id="trade-security-error" role="alert">
+                  {fieldErrors.security}
+                </small>
+              )}
+            </div>
           )}
 
           <div className="portfolio-dialog-form-grid is-numeric">
@@ -346,7 +545,9 @@ export default function TradeDialog({
 
           {!selectedSecurity && (
             <p className="portfolio-dialog-warning" role="status">
-              No securities are available. Add securities in Django Admin before recording trades.
+              {isSellMode
+                ? 'No held securities are available to sell.'
+                : 'Search for a symbol or company and select a security before submitting.'}
             </p>
           )}
           {isSellMode && selectedSecurity && (

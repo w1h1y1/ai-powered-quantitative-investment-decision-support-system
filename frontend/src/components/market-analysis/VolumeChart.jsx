@@ -1,12 +1,22 @@
 import { formatCompactVolume } from './chartMath'
+import useMarketChartViewportInteraction from './useMarketChartViewportInteraction'
 
 const width = 860
 const height = 154
 const padding = { top: 14, right: 22, bottom: 30, left: 58 }
 
-export default function VolumeChart({ stock, history, rangeLabel, interval }) {
+export default function VolumeChart({
+  fullCandleCount,
+  history,
+  interval,
+  onVisibleWindowChange,
+  onVisibleWindowReset,
+  rangeLabel,
+  stock,
+  visibleWindow,
+}) {
   const volumes = history.candles.map((candle) => candle.volume)
-  const maximum = Math.max(...volumes)
+  const maximum = Math.max(...volumes.filter(Number.isFinite), 1)
   const average = volumes.reduce((sum, value) => sum + value, 0) / volumes.length
   const current = volumes.at(-1)
   const activityRatio = current / Math.max(average, 1)
@@ -15,6 +25,23 @@ export default function VolumeChart({ stock, history, rangeLabel, interval }) {
   const plotHeight = height - padding.top - padding.bottom
   const slotWidth = plotWidth / volumes.length
   const barWidth = Math.max(slotWidth * 0.58, 4)
+  const {
+    chartContainerRef,
+    handlePointerDown,
+    handlePointerUp,
+    handleViewportPointerMove,
+    isDragging,
+    isFullView,
+    resetVisibleWindow,
+  } = useMarketChartViewportInteraction({
+    chartWidth: width,
+    onVisibleWindowChange,
+    onVisibleWindowReset,
+    plotLeft: padding.left,
+    plotWidth,
+    totalCandles: fullCandleCount ?? history.candles.length,
+    visibleWindow,
+  })
 
   return (
     <section className="market-panel market-volume-panel" aria-labelledby="volume-title">
@@ -28,10 +55,28 @@ export default function VolumeChart({ stock, history, rangeLabel, interval }) {
           <span>Peak Volume <strong>{formatCompactVolume(maximum)}</strong></span>
           <span>Current Volume <strong>{formatCompactVolume(current)}</strong></span>
           <span>Volume Activity <strong className={activity === 'Elevated' ? 'is-warning' : 'is-neutral'}>{activity}</strong></span>
+          <button
+            className="market-chart-reset-button"
+            type="button"
+            onClick={resetVisibleWindow}
+            disabled={isFullView}
+          >
+            Reset view
+          </button>
         </div>
       </div>
 
-      <div className="volume-chart" role="img" aria-label={`${stock.symbol} ${rangeLabel} range with ${interval} bars detailed volume analysis chart`}>
+      <div
+        ref={chartContainerRef}
+        className={`volume-chart ${isDragging ? 'is-dragging' : ''}`.trim()}
+        role="img"
+        aria-label={`${stock.symbol} ${rangeLabel} range with ${interval} bars detailed volume analysis chart`}
+        onDoubleClick={resetVisibleWindow}
+        onPointerCancel={handlePointerUp}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handleViewportPointerMove}
+        onPointerUp={handlePointerUp}
+      >
         <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
           {[0, 0.5, 1].map((position) => {
             const y = padding.top + position * plotHeight

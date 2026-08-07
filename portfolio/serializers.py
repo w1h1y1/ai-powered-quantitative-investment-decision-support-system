@@ -20,11 +20,12 @@ class PortfolioSerializer(serializers.ModelSerializer):
             'name',
             'description',
             'available_funds',
+            'initial_balance',
             'base_currency',
             'created_at',
             'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'initial_balance', 'created_at', 'updated_at']
 
 
 class UserPortfolioRelatedField(serializers.PrimaryKeyRelatedField):
@@ -77,13 +78,34 @@ class HoldingSerializer(serializers.ModelSerializer):
 
 
 class TradeTransactionSerializer(serializers.ModelSerializer):
+    REMOTE_SECURITY_FIELDS = (
+        'symbol',
+        'name',
+        'exchange',
+        'mic_code',
+        'instrument_type',
+        'country',
+        'currency',
+        'search_query',
+    )
+
     portfolio = UserPortfolioRelatedField()
     security = SecuritySummarySerializer(read_only=True)
     security_id = serializers.PrimaryKeyRelatedField(
         source='security',
         queryset=Security.objects.all(),
         write_only=True,
+        required=False,
+        allow_null=True,
     )
+    symbol = serializers.CharField(max_length=16, required=False, allow_blank=True, write_only=True)
+    name = serializers.CharField(max_length=255, required=False, allow_blank=True, write_only=True)
+    exchange = serializers.CharField(max_length=64, required=False, allow_blank=True, write_only=True)
+    mic_code = serializers.CharField(max_length=16, required=False, allow_blank=True, write_only=True)
+    instrument_type = serializers.CharField(max_length=64, required=False, allow_blank=True, write_only=True)
+    country = serializers.CharField(max_length=64, required=False, allow_blank=True, write_only=True)
+    currency = serializers.CharField(max_length=3, required=False, allow_blank=True, write_only=True)
+    search_query = serializers.CharField(max_length=255, required=False, allow_blank=True, write_only=True)
 
     def to_internal_value(self, data):
         data = data.copy()
@@ -103,13 +125,43 @@ class TradeTransactionSerializer(serializers.ModelSerializer):
         if value is None or value <= 0:
             errors[field_name] = message
 
+    def has_remote_security_submission(self, attrs):
+        return any(str(attrs.get(field_name) or '').strip() for field_name in self.REMOTE_SECURITY_FIELDS)
+
+    def get_security_submission(self):
+        return {
+            field_name: self.validated_data.get(field_name)
+            for field_name in self.REMOTE_SECURITY_FIELDS
+            if field_name in self.validated_data
+        }
+
+    def pop_security_submission(self):
+        for field_name in self.REMOTE_SECURITY_FIELDS:
+            self.validated_data.pop(field_name, None)
+
     def validate(self, attrs):
         errors = {}
         transaction_type = self.get_value_for_validation(attrs, 'transaction_type')
+        security = self.get_value_for_validation(attrs, 'security')
+        has_remote_security_submission = self.has_remote_security_submission(attrs)
         quantity = self.get_value_for_validation(attrs, 'quantity')
         price = self.get_value_for_validation(attrs, 'price')
         cash_amount = self.get_value_for_validation(attrs, 'cash_amount')
         fee = self.get_value_for_validation(attrs, 'fee')
+
+        if transaction_type in {
+            TradeTransaction.TransactionType.BUY,
+            TradeTransaction.TransactionType.SELL,
+            TradeTransaction.TransactionType.DIVIDEND,
+        }:
+            if not security and not (
+                transaction_type == TradeTransaction.TransactionType.BUY
+                and has_remote_security_submission
+            ):
+                errors['security_id'] = 'Please select a security.'
+
+        if transaction_type != TradeTransaction.TransactionType.BUY and has_remote_security_submission:
+            errors['security_id'] = 'Remote security search can only be used for buy transactions.'
 
         if transaction_type in {
             TradeTransaction.TransactionType.BUY,
@@ -162,14 +214,23 @@ class TradeTransactionSerializer(serializers.ModelSerializer):
             'portfolio',
             'security',
             'security_id',
+            'symbol',
+            'name',
+            'exchange',
+            'mic_code',
+            'instrument_type',
+            'country',
+            'currency',
+            'search_query',
             'transaction_type',
             'quantity',
             'price',
             'cash_amount',
             'fee',
+            'realized_profit_loss',
             'transaction_date',
             'notes',
             'created_at',
             'updated_at',
         ]
-        read_only_fields = ['id', 'security', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'security', 'realized_profit_loss', 'created_at', 'updated_at']

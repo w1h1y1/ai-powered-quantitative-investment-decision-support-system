@@ -112,6 +112,7 @@
 }
 
 .backtest-field.is-asset,
+.backtest-field.is-benchmark,
 .backtest-field.is-strategy {
   grid-column: span 2;
 }
@@ -419,6 +420,74 @@
   gap: 10px;
 }
 
+.backtest-parameters-used {
+  display: grid;
+  grid-template-columns: 145px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+  padding: 12px 14px;
+}
+
+.backtest-parameters-used p,
+.backtest-parameters-used h2,
+.backtest-parameters-used dl,
+.backtest-parameters-used dt,
+.backtest-parameters-used dd {
+  margin: 0;
+}
+
+.backtest-parameters-used p {
+  color: #8690a1;
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.backtest-parameters-used h2 {
+  margin-top: 3px;
+  color: #2b364b;
+  font-size: 14px;
+}
+
+.backtest-parameters-used dl {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(78px, 1fr));
+  gap: 8px;
+}
+
+.backtest-parameters-used dl > div {
+  min-width: 0;
+  padding-left: 8px;
+  border-left: 1px solid #e7ebf2;
+}
+
+.backtest-parameters-used dt {
+  overflow: hidden;
+  color: #8a94a5;
+  font-size: 8px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.backtest-parameters-used dd {
+  margin-top: 3px;
+  color: #303c52;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.backtest-no-signals {
+  margin: 0;
+  padding: 10px 12px;
+  color: #6f5a1f;
+  background: #fff8df;
+  border: 1px solid #f0dda1;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 650;
+}
+
 .backtest-metric-card {
   position: relative;
   min-width: 0;
@@ -482,6 +551,69 @@
   line-height: 1.2;
 }
 
+.backtest-layer-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  margin-top: 14px;
+}
+
+.backtest-layer-column {
+  min-width: 0;
+}
+
+.backtest-layer-column + .backtest-layer-column {
+  padding-left: 20px;
+  border-left: 1px solid #e9edf3;
+}
+
+.backtest-layer-column h3 {
+  margin: 0 0 8px;
+  color: #42516b;
+  font-size: 12px;
+}
+
+.backtest-layer-column.is-core h3 {
+  color: #5060cf;
+}
+
+.backtest-layer-column.is-swing h3 {
+  color: #167c63;
+}
+
+.backtest-layer-metric {
+  display: flex;
+  min-height: 31px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid #eef1f5;
+}
+
+.backtest-layer-metric:last-child {
+  border-bottom: 0;
+}
+
+.backtest-layer-metric span {
+  color: #7d8798;
+  font-size: 9px;
+}
+
+.backtest-layer-metric strong {
+  color: #3c4860;
+  font-size: 10px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.backtest-layer-metric strong.is-positive {
+  color: #23875f;
+}
+
+.backtest-layer-metric strong.is-negative {
+  color: #c34f60;
+}
+
 .backtest-chart-legend {
   display: flex;
   flex-wrap: wrap;
@@ -514,6 +646,90 @@
   background: #df5c6d;
 }
 
+.backtest-chart-legend i.is-close-price {
+  background: #344158;
+}
+
+.backtest-chart-legend i.is-ma10 {
+  background: #27a281;
+}
+
+.backtest-chart-legend i.is-fast-ma {
+  background: #6877f5;
+}
+
+.backtest-chart-legend i.is-slow-ma {
+  background: #dc8a35;
+}
+
+.backtest-chart-legend i.is-buy-signal,
+.backtest-chart-legend i.is-sell-signal,
+.backtest-chart-legend i.is-core-buy,
+.backtest-chart-legend i.is-core-exit,
+.backtest-chart-legend i.is-swing-buy,
+.backtest-chart-legend i.is-swing-sell,
+.backtest-chart-legend i.is-regime-bull,
+.backtest-chart-legend i.is-regime-neutral,
+.backtest-chart-legend i.is-regime-bear {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.backtest-chart-legend i.is-buy-signal {
+  background: #23966a;
+}
+
+.backtest-chart-legend i.is-sell-signal {
+  background: #d95768;
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+
+.backtest-chart-legend i.is-core-buy {
+  background: #5067dc;
+}
+
+.backtest-chart-legend i.is-core-exit {
+  background: #d95768;
+}
+
+.backtest-chart-legend i.is-swing-buy {
+  background: #23966a;
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+
+.backtest-chart-legend i.is-swing-sell {
+  background: #d58a32;
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+
+.backtest-chart-legend i.is-core-exposure {
+  background: #5067dc;
+}
+
+.backtest-chart-legend i.is-swing-exposure {
+  background: #23966a;
+}
+
+.backtest-chart-legend i.is-total-exposure {
+  background: #313d53;
+}
+
+.backtest-chart-legend i.is-regime-bull {
+  background: rgba(35, 150, 106, 0.42);
+}
+
+.backtest-chart-legend i.is-regime-neutral {
+  background: rgba(216, 163, 57, 0.42);
+}
+
+.backtest-chart-legend i.is-regime-bear {
+  background: rgba(217, 87, 104, 0.42);
+}
+
 .backtest-line-chart {
   position: relative;
   width: 100%;
@@ -526,6 +742,11 @@
   min-height: 210px;
 }
 
+.backtest-price-signal-chart {
+  min-height: 330px;
+  overflow: hidden;
+}
+
 .backtest-line-chart svg {
   width: 100%;
   height: 270px;
@@ -534,6 +755,16 @@
 
 .backtest-chart-card.is-drawdown .backtest-line-chart svg {
   height: 210px;
+}
+
+.backtest-price-signal-chart svg {
+  height: 330px;
+}
+
+.backtest-exposure-chart,
+.backtest-exposure-chart svg {
+  min-height: 230px;
+  height: 230px;
 }
 
 .backtest-chart-grid-line {
@@ -577,6 +808,129 @@
   stroke-width: 2.2;
 }
 
+.backtest-close-price-line,
+.backtest-ma10-line,
+.backtest-fast-ma-line,
+.backtest-slow-ma-line {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.backtest-ma10-line {
+  stroke: #27a281;
+  stroke-width: 1.6;
+}
+
+.backtest-close-price-line {
+  stroke: #344158;
+  stroke-width: 2.2;
+}
+
+.backtest-fast-ma-line {
+  stroke: #6877f5;
+  stroke-width: 1.8;
+}
+
+.backtest-slow-ma-line {
+  stroke: #dc8a35;
+  stroke-width: 1.8;
+}
+
+.backtest-layer-trade-marker circle,
+.backtest-layer-trade-marker rect,
+.backtest-layer-trade-marker polygon {
+  stroke: #ffffff;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.backtest-layer-trade-marker.is-core-buy circle {
+  fill: #5067dc;
+}
+
+.backtest-layer-trade-marker.is-core-sell circle {
+  fill: #d95768;
+}
+
+.backtest-layer-trade-marker.is-swing-buy polygon {
+  fill: #23966a;
+}
+
+.backtest-layer-trade-marker.is-swing-sell rect {
+  fill: #d58a32;
+}
+
+.backtest-layer-trade-marker text {
+  fill: #ffffff;
+  stroke: none;
+  font-family: inherit;
+  font-size: 5.8px;
+  font-weight: 800;
+  pointer-events: none;
+}
+
+.backtest-core-exposure-line,
+.backtest-swing-exposure-line,
+.backtest-total-exposure-line {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.backtest-core-exposure-line {
+  stroke: #5067dc;
+  stroke-width: 2;
+}
+
+.backtest-swing-exposure-line {
+  stroke: #23966a;
+  stroke-width: 1.8;
+}
+
+.backtest-total-exposure-line {
+  stroke: #313d53;
+  stroke-width: 2.3;
+}
+
+.backtest-regime-band {
+  stroke: none;
+}
+
+.backtest-regime-band.is-bull {
+  fill: rgba(35, 150, 106, 0.07);
+}
+
+.backtest-regime-band.is-neutral {
+  fill: rgba(216, 163, 57, 0.08);
+}
+
+.backtest-regime-band.is-bear {
+  fill: rgba(217, 87, 104, 0.07);
+}
+
+.backtest-trade-marker circle,
+.backtest-trade-marker rect {
+  stroke: #ffffff;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.backtest-trade-marker.is-buy circle {
+  fill: #23966a;
+}
+
+.backtest-trade-marker.is-sell rect {
+  fill: #d95768;
+}
+
+.backtest-trade-marker text {
+  fill: #ffffff;
+  stroke: none;
+  font-family: inherit;
+  font-size: 7px;
+  font-weight: 800;
+  pointer-events: none;
+}
+
 .backtest-chart-hover-line {
   stroke: #aeb7c7;
   stroke-width: 1;
@@ -600,6 +954,22 @@
 
 .backtest-chart-hover-point.is-drawdown {
   stroke: #df5c6d;
+}
+
+.backtest-chart-hover-point.is-close {
+  stroke: #344158;
+}
+
+.backtest-chart-hover-point.is-ma10 {
+  stroke: #27a281;
+}
+
+.backtest-chart-hover-point.is-fast-ma {
+  stroke: #6877f5;
+}
+
+.backtest-chart-hover-point.is-slow-ma {
+  stroke: #dc8a35;
 }
 
 .backtest-chart-tooltip {
@@ -640,14 +1010,113 @@
   white-space: nowrap;
 }
 
+.backtest-price-signal-tooltip {
+  min-width: 220px;
+}
+
+.backtest-tooltip-trade {
+  display: grid;
+  gap: 4px;
+  padding-top: 7px;
+  margin-top: 1px;
+  border-top: 1px solid #e8ebf1;
+}
+
+.backtest-tooltip-trade > strong {
+  color: #23875f;
+  font-size: 9px;
+}
+
+.backtest-tooltip-trade.is-sell > strong {
+  color: #c34f60;
+}
+
+.backtest-comparison-table {
+  width: 100%;
+  min-width: 900px;
+  border-collapse: collapse;
+}
+
+.backtest-comparison-table th {
+  padding: 9px;
+  color: #969faf;
+  border-bottom: 1px solid #e9edf3;
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.07em;
+  text-align: right;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.backtest-comparison-table th:first-child,
+.backtest-comparison-table td:first-child {
+  text-align: left;
+}
+
+.backtest-comparison-table td {
+  padding: 10px 9px;
+  color: #445066;
+  border-bottom: 1px solid #eef1f5;
+  font-size: 10px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.backtest-comparison-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.backtest-comparison-table tbody tr.is-hybrid {
+  background: rgba(104, 119, 245, 0.05);
+}
+
+.backtest-comparison-table .is-positive {
+  color: #23875f;
+  font-weight: 750;
+}
+
+.backtest-comparison-table .is-negative {
+  color: #c34f60;
+  font-weight: 750;
+}
+
+.backtest-chart-empty {
+  display: flex;
+  min-height: 210px;
+  align-items: center;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 12px;
+  color: #7e899b;
+  background: #fafbfe;
+  border: 1px dashed #dfe4ed;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.backtest-chart-empty strong {
+  color: #39455a;
+  font-size: 11px;
+}
+
+.backtest-chart-empty span {
+  max-width: 480px;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
 .backtest-summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
   gap: 10px;
   margin-top: 12px;
 }
 
 .backtest-summary-grid article {
+  height: 100%;
   padding: 11px;
   background: #fafbfe;
   border: 1px solid #edf0f5;
@@ -694,7 +1163,7 @@
 }
 
 .backtest-trades-table {
-  min-width: 900px;
+  min-width: 1240px;
 }
 
 .backtest-history-table {
@@ -768,6 +1237,46 @@
 .backtest-trade-action.is-sell {
   color: #c34f60;
   background: rgba(239, 106, 120, 0.11);
+}
+
+.backtest-layer-badge {
+  display: inline-flex;
+  min-width: 46px;
+  min-height: 23px;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 7px;
+  border-radius: 6px;
+  font-size: 8px;
+  font-weight: 750;
+}
+
+.backtest-layer-badge.is-core {
+  color: #5060cf;
+  background: rgba(80, 103, 220, 0.1);
+}
+
+.backtest-layer-badge.is-swing {
+  color: #167c63;
+  background: rgba(35, 150, 106, 0.1);
+}
+
+.backtest-trade-reason {
+  color: #647086;
+  font-size: 8px;
+  font-weight: 650;
+}
+
+.backtest-sizing-badge {
+  display: block;
+  width: fit-content;
+  margin-top: 4px;
+  padding: 2px 5px;
+  color: #6b5a1d;
+  background: #fff5cf;
+  border-radius: 5px;
+  font-size: 7px;
+  font-weight: 750;
 }
 
 .backtest-return {
@@ -968,6 +1477,10 @@
   .backtest-metrics-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  .backtest-parameters-used dl {
+    grid-template-columns: repeat(4, minmax(78px, 1fr));
+  }
 }
 
 @media (max-width: 900px) {
@@ -976,11 +1489,16 @@
   }
 
   .backtest-field.is-asset,
+  .backtest-field.is-benchmark,
   .backtest-field.is-strategy {
     grid-column: span 1;
   }
 
   .backtest-parameter-action-row {
+    grid-template-columns: 1fr;
+  }
+
+  .backtest-parameters-used {
     grid-template-columns: 1fr;
   }
 
@@ -998,10 +1516,27 @@
 
   .backtest-summary-grid {
     grid-template-columns: 1fr;
+    grid-auto-rows: auto;
+  }
+
+  .backtest-layer-metrics-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+
+  .backtest-layer-column + .backtest-layer-column {
+    padding-top: 14px;
+    padding-left: 0;
+    border-top: 1px solid #e9edf3;
+    border-left: 0;
   }
 }
 
 @media (max-width: 760px) {
+  .backtest-parameters-used dl {
+    grid-template-columns: repeat(2, minmax(78px, 1fr));
+  }
+
   .backtest-config-actions,
   .backtest-result-context {
     align-items: stretch;
@@ -1029,6 +1564,18 @@
     height: 190px;
   }
 
+  .backtest-price-signal-chart,
+  .backtest-price-signal-chart svg {
+    min-height: 285px;
+    height: 285px;
+  }
+
+  .backtest-exposure-chart,
+  .backtest-exposure-chart svg {
+    min-height: 210px;
+    height: 210px;
+  }
+
   .backtest-table-wrap {
     max-width: 100%;
     overflow: visible;
@@ -1036,12 +1583,14 @@
   }
 
   .backtest-trades-table,
+  .backtest-comparison-table,
   .backtest-history-table {
     display: block;
     min-width: 0;
   }
 
   .backtest-trades-table thead,
+  .backtest-comparison-table thead,
   .backtest-history-table thead {
     position: absolute;
     width: 1px;
@@ -1055,12 +1604,14 @@
   }
 
   .backtest-trades-table tbody,
+  .backtest-comparison-table tbody,
   .backtest-history-table tbody {
     display: grid;
     gap: 11px;
   }
 
   .backtest-trades-table tr,
+  .backtest-comparison-table tr,
   .backtest-history-table tr {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1072,6 +1623,7 @@
   }
 
   .backtest-trades-table td,
+  .backtest-comparison-table td,
   .backtest-history-table td {
     display: flex;
     min-width: 0;
@@ -1086,6 +1638,7 @@
   }
 
   .backtest-trades-table td::before,
+  .backtest-comparison-table td::before,
   .backtest-history-table td::before {
     flex: 0 0 auto;
     content: attr(data-label);
@@ -1097,12 +1650,14 @@
   }
 
   .backtest-trades-table td:last-child,
+  .backtest-comparison-table td:last-child,
   .backtest-history-table td:nth-child(2),
   .backtest-history-table td:last-child {
     grid-column: 1 / -1;
   }
 
   .backtest-trades-table td:last-child,
+  .backtest-comparison-table td:last-child,
   .backtest-history-table td:last-child {
     border-bottom: 0;
   }
@@ -1137,6 +1692,7 @@
   }
 
   .backtest-field.is-asset,
+  .backtest-field.is-benchmark,
   .backtest-field.is-strategy {
     grid-column: span 1;
   }
@@ -1154,13 +1710,16 @@
   }
 
   .backtest-trades-table tr,
+  .backtest-comparison-table tr,
   .backtest-history-table tr {
     grid-template-columns: 1fr;
   }
 
   .backtest-trades-table td,
+  .backtest-comparison-table td,
   .backtest-history-table td,
   .backtest-trades-table td:last-child,
+  .backtest-comparison-table td:last-child,
   .backtest-history-table td:nth-child(2),
   .backtest-history-table td:last-child {
     grid-column: 1;

@@ -19,7 +19,10 @@ export const SUMMARY_CARD_LABELS = Object.freeze([
   'Remaining Liquidity',
   'Total Cost',
   'Unrealized Profit / Loss',
-  'Return Percentage',
+  'Realized Profit / Loss',
+  'Total Profit / Loss',
+  'Unrealized Return',
+  'Total Return',
 ])
 
 export function parseDecimal(value) {
@@ -46,9 +49,9 @@ function getTone(value) {
 
 function formatHoldingsDetail(count) {
   const safeCount = parseCount(count)
-  if (safeCount === 0) return 'No positions - Demo prices'
-  if (safeCount === 1) return '1 position - Demo prices'
-  return `${safeCount} positions - Demo prices`
+  if (safeCount === 0) return 'No positions'
+  if (safeCount === 1) return '1 position using Portfolio Summary prices'
+  return `${safeCount} positions using Portfolio Summary prices`
 }
 
 export function normalizeSecurity(security) {
@@ -104,13 +107,14 @@ export function normalizePortfolioSummary(summary) {
     ? summary.allocations.map(normalizeSummaryAllocation).filter(Boolean)
     : []
   const holdingsValue = parseDecimal(summary.holdings_market_value)
+  const unrealizedReturn = summary.unrealized_return_percentage ?? summary.unrealized_return_percent
 
   return {
     portfolioId: summary.portfolio_id,
     portfolioName: summary.portfolio_name || 'My Portfolio',
     portfolioCreatedAt: summary.portfolio_created_at,
     baseCurrency: summary.base_currency || 'USD',
-    priceSource: summary.price_source || 'DEMO_STATIC',
+    priceSource: summary.price_source || 'PRICE_UNAVAILABLE',
     holdings,
     allocation: holdings.map((holding) => ({
       key: holding.id ?? holding.symbol,
@@ -126,8 +130,14 @@ export function normalizePortfolioSummary(summary) {
       holdingsValue,
       availableFunds: parseDecimal(summary.remaining_liquidity),
       costBasis: parseDecimal(summary.total_cost),
+      unrealizedProfitLoss: parseDecimal(summary.unrealized_profit_loss),
+      realizedProfitLoss: parseDecimal(summary.realized_profit_loss),
+      totalProfitLoss: parseDecimal(summary.total_profit_loss),
+      netInvestedCapital: parseDecimal(summary.net_invested_capital),
+      unrealizedReturnPercentage: parseDecimal(unrealizedReturn),
+      totalReturnPercentage: parseDecimal(summary.total_return_percentage),
       totalGainLoss: parseDecimal(summary.unrealized_profit_loss),
-      totalGainLossPercent: parseDecimal(summary.unrealized_return_percent),
+      totalGainLossPercent: parseDecimal(unrealizedReturn),
     },
   }
 }
@@ -135,7 +145,9 @@ export function normalizePortfolioSummary(summary) {
 export function buildPortfolioSummaryCards(summary) {
   const hasSummary = Boolean(summary)
   const safeSummary = summary ?? {}
-  const totalGainLoss = parseDecimal(safeSummary.totalGainLoss)
+  const unrealizedProfitLoss = parseDecimal(safeSummary.unrealizedProfitLoss ?? safeSummary.totalGainLoss)
+  const realizedProfitLoss = parseDecimal(safeSummary.realizedProfitLoss)
+  const totalProfitLoss = parseDecimal(safeSummary.totalProfitLoss)
 
   return [
     {
@@ -156,19 +168,37 @@ export function buildPortfolioSummaryCards(summary) {
     {
       label: 'Total Cost',
       value: hasSummary ? formatCurrency(parseDecimal(safeSummary.costBasis)) : PLACEHOLDER,
-      detail: 'Quantity multiplied by average price',
+      detail: 'Remaining quantity multiplied by fee-adjusted average cost',
     },
     {
       label: 'Unrealized Profit / Loss',
-      value: hasSummary ? formatSignedCurrency(totalGainLoss) : PLACEHOLDER,
-      detail: 'Market value minus total cost',
-      tone: hasSummary ? getTone(totalGainLoss) : undefined,
+      value: hasSummary ? formatSignedCurrency(unrealizedProfitLoss) : PLACEHOLDER,
+      detail: 'Holdings value minus remaining cost basis',
+      tone: hasSummary ? getTone(unrealizedProfitLoss) : undefined,
     },
     {
-      label: 'Return Percentage',
-      value: hasSummary ? formatPercentage(parseDecimal(safeSummary.totalGainLossPercent)) : PLACEHOLDER,
-      detail: 'Unrealized P/L divided by total cost',
-      tone: hasSummary ? getTone(totalGainLoss) : undefined,
+      label: 'Realized Profit / Loss',
+      value: hasSummary ? formatSignedCurrency(realizedProfitLoss) : PLACEHOLDER,
+      detail: 'Closed trade gains and losses after sell fees',
+      tone: hasSummary ? getTone(realizedProfitLoss) : undefined,
+    },
+    {
+      label: 'Total Profit / Loss',
+      value: hasSummary ? formatSignedCurrency(totalProfitLoss) : PLACEHOLDER,
+      detail: 'Realized plus unrealized profit and loss',
+      tone: hasSummary ? getTone(totalProfitLoss) : undefined,
+    },
+    {
+      label: 'Unrealized Return',
+      value: hasSummary ? formatPercentage(parseDecimal(safeSummary.unrealizedReturnPercentage ?? safeSummary.totalGainLossPercent)) : PLACEHOLDER,
+      detail: 'Unrealized P/L divided by remaining cost basis',
+      tone: hasSummary ? getTone(unrealizedProfitLoss) : undefined,
+    },
+    {
+      label: 'Total Return',
+      value: hasSummary ? formatPercentage(parseDecimal(safeSummary.totalReturnPercentage)) : PLACEHOLDER,
+      detail: 'Total P/L divided by net invested capital',
+      tone: hasSummary ? getTone(totalProfitLoss) : undefined,
     },
   ]
 }

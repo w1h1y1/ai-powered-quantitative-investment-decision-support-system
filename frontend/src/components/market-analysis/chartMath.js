@@ -1,3 +1,10 @@
+import {
+  exponentialMovingAverage as sharedExponentialMovingAverage,
+  macdSeries as sharedMacdSeries,
+  movingAverageSeries as sharedMovingAverageSeries,
+  rsiSeries as sharedRsiSeries,
+} from '../../utils/technicalIndicators'
+
 export function simpleMovingAverage(values, windowSize = 5) {
   return values.map((_, index) => {
     const start = Math.max(0, index - windowSize + 1)
@@ -6,24 +13,12 @@ export function simpleMovingAverage(values, windowSize = 5) {
   })
 }
 
-// TODO: Use historical warm-up bars when connected to backend market data.
 export function movingAverageSeries(values, period) {
-  return values.map((_, index) => {
-    if (index < period - 1) return null
-    const sample = values.slice(index - period + 1, index + 1)
-    return sample.reduce((sum, value) => sum + value, 0) / period
-  })
+  return sharedMovingAverageSeries(values, period)
 }
 
 export function exponentialMovingAverage(values, period = 5) {
-  const multiplier = 2 / (period + 1)
-  const result = [values[0]]
-
-  for (let index = 1; index < values.length; index += 1) {
-    result.push((values[index] - result[index - 1]) * multiplier + result[index - 1])
-  }
-
-  return result
+  return sharedExponentialMovingAverage(values, period)
 }
 
 export function bollingerBands(values, windowSize = 5, multiplier = 1.7) {
@@ -63,18 +58,7 @@ export function bollingerOverlaySeries(values, period = 20, multiplier = 2) {
 }
 
 export function macdSeries(values, fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) {
-  const fastEma = exponentialMovingAverage(values, fastPeriod)
-  const slowEma = exponentialMovingAverage(values, slowPeriod)
-  const dif = fastEma.map((value, index) => value - slowEma[index])
-  const dea = exponentialMovingAverage(dif, signalPeriod)
-  const histogram = dif.map((value, index) => value - dea[index])
-
-  return {
-    dif,
-    dea,
-    histogram,
-    parameters: { fastPeriod, slowPeriod, signalPeriod },
-  }
+  return sharedMacdSeries(values, fastPeriod, slowPeriod, signalPeriod)
 }
 
 function calculateRsiValue(averageGain, averageLoss) {
@@ -87,43 +71,26 @@ function calculateRsiValue(averageGain, averageLoss) {
 }
 
 export function rsiSeries(values, period = 14) {
-  const result = Array(values.length).fill(null)
-  if (values.length <= period) return result
-
-  let gainSum = 0
-  let lossSum = 0
-
-  for (let index = 1; index <= period; index += 1) {
-    const change = values[index] - values[index - 1]
-    if (change >= 0) gainSum += change
-    else lossSum += Math.abs(change)
-  }
-
-  let averageGain = gainSum / period
-  let averageLoss = lossSum / period
-  result[period] = calculateRsiValue(averageGain, averageLoss)
-
-  for (let index = period + 1; index < values.length; index += 1) {
-    const change = values[index] - values[index - 1]
-    const gain = Math.max(change, 0)
-    const loss = Math.max(-change, 0)
-    averageGain = (averageGain * (period - 1) + gain) / period
-    averageLoss = (averageLoss * (period - 1) + loss) / period
-    result[index] = calculateRsiValue(averageGain, averageLoss)
-  }
-
-  return result
+  return sharedRsiSeries(values, period)
 }
 
-export function buildTechnicalSummary(candles) {
+export function buildTechnicalSummary(candles, indicators = []) {
   const closes = candles.map((candle) => candle.close)
   const volumes = candles.map((candle) => candle.volume)
   const lastIndex = closes.length - 1
   const latestClose = closes[lastIndex]
   const ma5 = movingAverageSeries(closes, 5)[lastIndex]
   const ma20 = movingAverageSeries(closes, 20)[lastIndex]
-  const rsi = rsiSeries(closes, 14).findLast((value) => Number.isFinite(value)) ?? 50
-  const macd = macdSeries(closes, 12, 26, 9)
+  const hasTrendAverages = Number.isFinite(latestClose) && Number.isFinite(ma5) && Number.isFinite(ma20)
+  const rsi = indicators.map((indicator) => indicator.rsi).findLast((value) => Number.isFinite(value))
+    ?? rsiSeries(closes, 14).findLast((value) => Number.isFinite(value))
+    ?? 50
+  const macd = indicators.length
+    ? {
+      dif: indicators.map((indicator) => indicator.macd),
+      dea: indicators.map((indicator) => indicator.signal),
+    }
+    : macdSeries(closes, 12, 26, 9)
   const bollinger = bollingerOverlaySeries(closes, 20, 2)
   const upper = bollinger.upper[lastIndex]
   const middle = bollinger.middle[lastIndex]
@@ -135,11 +102,11 @@ export function buildTechnicalSummary(candles) {
     ? ((upper - lower) / Math.max(Math.abs(middle), 0.01)) * 100
     : 0
 
-  const trend = latestClose > ma20 && ma5 > ma20
+  const trend = hasTrendAverages && latestClose > ma20 && ma5 > ma20
     ? { value: 'Bullish', tone: 'positive' }
-    : latestClose < ma20 && ma5 < ma20
+    : hasTrendAverages && latestClose < ma20 && ma5 < ma20
       ? { value: 'Bearish', tone: 'negative' }
-      : { value: 'Mixed', tone: 'neutral' }
+      : { value: hasTrendAverages ? 'Mixed' : 'Insufficient data', tone: 'neutral' }
 
   const rsiStatus = rsi >= 70
     ? { value: 'Overbought', tone: 'warning' }
@@ -151,20 +118,25 @@ export function buildTechnicalSummary(candles) {
           ? { value: 'Neutral, close to oversold', tone: 'neutral' }
           : { value: 'Neutral', tone: 'neutral' }
 
-  const dif = macd.dif[lastIndex]
-  const dea = macd.dea[lastIndex]
+  const latestMacdIndex = macd.dif.findLastIndex((value, index) => (
+    Number.isFinite(value) && Number.isFinite(macd.dea[index])
+  ))
+  const dif = latestMacdIndex >= 0 ? macd.dif[latestMacdIndex] : null
+  const dea = latestMacdIndex >= 0 ? macd.dea[latestMacdIndex] : null
   const macdMomentum = dif > dea
     ? { value: 'Bullish momentum', tone: 'positive' }
     : dif < dea
       ? { value: 'Bearish momentum', tone: 'negative' }
       : { value: 'Neutral momentum', tone: 'neutral' }
 
-  const priceDifference = latestClose - ma20
-  const priceVsMa20 = Math.abs(priceDifference) <= Math.abs(latestClose) * 0.0005
-    ? { value: 'At MA20', tone: 'neutral' }
-    : priceDifference > 0
-      ? { value: 'Above MA20', tone: 'positive' }
-      : { value: 'Below MA20', tone: 'negative' }
+  const priceDifference = hasTrendAverages ? latestClose - ma20 : null
+  const priceVsMa20 = priceDifference === null
+    ? { value: 'Insufficient data', tone: 'neutral' }
+    : Math.abs(priceDifference) <= Math.abs(latestClose) * 0.0005
+      ? { value: 'At MA20', tone: 'neutral' }
+      : priceDifference > 0
+        ? { value: 'Above MA20', tone: 'positive' }
+        : { value: 'Below MA20', tone: 'negative' }
 
   const volatility = bandwidth < 2
     ? { value: 'Low', tone: 'neutral' }

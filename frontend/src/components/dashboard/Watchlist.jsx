@@ -1,6 +1,6 @@
 import Sparkline from './Sparkline'
 
-export default function Watchlist({ items, onViewAll }) {
+export default function Watchlist({ error = '', isLoading = false, items, onRetry, onViewAll }) {
   return (
     <section className="dashboard-panel watchlist-panel" aria-labelledby="watchlist-title">
       <div className="panel-header">
@@ -22,7 +22,20 @@ export default function Watchlist({ items, onViewAll }) {
             </tr>
           </thead>
           <tbody>
-            {items.map((item) => (
+            {isLoading ? (
+              <tr>
+                <td colSpan="4">Loading your Watchlist...</td>
+              </tr>
+            ) : error ? (
+              <tr>
+                <td colSpan="4">
+                  {error}
+                  {onRetry && (
+                    <button className="panel-action" type="button" onClick={onRetry}>Retry</button>
+                  )}
+                </td>
+              </tr>
+            ) : items.length ? items.map((item) => (
               <tr key={item.symbol}>
                 <td>
                   <span className="watchlist-symbol">{item.symbol}</span>
@@ -30,9 +43,13 @@ export default function Watchlist({ items, onViewAll }) {
                 </td>
                 <td className="watchlist-price">{item.price}</td>
                 <td><span className={`watchlist-change is-${item.direction}`}>{item.change}</span></td>
-                <td><Sparkline values={item.trend} color={item.direction === 'up' ? '#2bbf8a' : '#ef6a78'} width={76} height={28} /></td>
+                <td><Sparkline values={item.trend} color={item.direction === 'up' ? '#2bbf8a' : item.direction === 'down' ? '#ef6a78' : '#9aa3b2'} width={76} height={28} /></td>
               </tr>
-            ))}
+            )) : (
+              <tr>
+                <td colSpan="4">No saved Watchlist securities.</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

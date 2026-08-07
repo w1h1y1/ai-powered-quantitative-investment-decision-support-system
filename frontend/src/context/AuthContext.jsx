@@ -28,20 +28,23 @@ async function confirmLoggedOut() {
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
+  const [authError, setAuthError] = useState('')
   const [isLoading, setIsLoading] = useState(true)
 
   const refreshUser = useCallback(async () => {
     setIsLoading(true)
     try {
       const currentUser = await authApi.me()
+      setAuthError('')
       setUser(currentUser)
       return currentUser
     } catch (error) {
       if (isUnauthenticatedError(error)) {
+        setAuthError('')
         setUser(null)
         return null
       }
-      setUser(null)
+      setAuthError(error?.message || 'Unable to connect to the server. Please try again later.')
       throw error
     } finally {
       setIsLoading(false)
@@ -53,10 +56,21 @@ export function AuthProvider({ children }) {
 
     authApi.me()
       .then((currentUser) => {
-        if (isMounted) setUser(currentUser)
+        if (isMounted) {
+          setAuthError('')
+          setUser(currentUser)
+        }
       })
-      .catch(() => {
-        if (isMounted) setUser(null)
+      .catch((error) => {
+        if (!isMounted) return
+
+        if (isUnauthenticatedError(error)) {
+          setAuthError('')
+          setUser(null)
+          return
+        }
+
+        setAuthError(error?.message || 'Unable to connect to the server. Please try again later.')
       })
       .finally(() => {
         if (isMounted) setIsLoading(false)
@@ -70,6 +84,7 @@ export function AuthProvider({ children }) {
   const login = useCallback(async (credentials) => {
     const loginUser = await authApi.login(credentials)
     const currentUser = await confirmCurrentSession(loginUser)
+    setAuthError('')
     setUser(currentUser)
     return currentUser
   }, [])
@@ -80,6 +95,7 @@ export function AuthProvider({ children }) {
       username: payload.username,
       password: payload.password,
     })
+    setAuthError('')
     setUser(currentUser)
     return currentUser
   }, [])
@@ -88,6 +104,7 @@ export function AuthProvider({ children }) {
     try {
       await authApi.logout()
       await confirmLoggedOut()
+      setAuthError('')
       setUser(null)
     } catch (error) {
       const detail = String(error?.data?.detail || error?.message || '').toLowerCase()
@@ -96,6 +113,7 @@ export function AuthProvider({ children }) {
       const isCsrfFailure = error?.status === 403 && detail.includes('csrf')
 
       if (isAlreadyLoggedOut) {
+        setAuthError('')
         setUser(null)
         return
       }
@@ -104,6 +122,7 @@ export function AuthProvider({ children }) {
         await authApi.csrf()
         await authApi.logout()
         await confirmLoggedOut()
+        setAuthError('')
         setUser(null)
         return
       }
@@ -113,6 +132,7 @@ export function AuthProvider({ children }) {
   }, [])
 
   const value = useMemo(() => ({
+    authError,
     user,
     isLoading,
     isAuthenticated: Boolean(user),
@@ -120,7 +140,7 @@ export function AuthProvider({ children }) {
     logout,
     refreshUser,
     register,
-  }), [isLoading, login, logout, refreshUser, register, user])
+  }), [authError, isLoading, login, logout, refreshUser, register, user])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

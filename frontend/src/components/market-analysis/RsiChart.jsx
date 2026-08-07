@@ -1,14 +1,26 @@
 import { useMemo } from 'react'
 import { createDefinedLinePath, getIndicatorSeries } from './chartMath'
 import IndicatorInfoTip from './IndicatorInfoTip'
+import useMarketChartViewportInteraction from './useMarketChartViewportInteraction'
 
 const width = 1180
 const height = 250
 const padding = { top: 24, right: 68, bottom: 38, left: 52 }
 
-export default function RsiChart({ stock, history, timeframeLabel }) {
+export default function RsiChart({
+  fullCandleCount,
+  history,
+  onVisibleWindowChange,
+  onVisibleWindowReset,
+  stock,
+  timeframeLabel,
+  visibleWindow,
+}) {
   const closes = useMemo(() => history.candles.map((candle) => candle.close), [history.candles])
-  const rsi = useMemo(() => getIndicatorSeries('rsi', closes).primary, [closes])
+  const rsi = useMemo(() => {
+    const indicatorValues = history.indicators?.map((indicator) => indicator.rsi) ?? []
+    return indicatorValues.length ? indicatorValues : getIndicatorSeries('rsi', closes).primary
+  }, [closes, history.indicators])
   const plotWidth = width - padding.left - padding.right
   const plotHeight = height - padding.top - padding.bottom
   const xScale = (index) => padding.left + (index / Math.max(closes.length - 1, 1)) * plotWidth
@@ -20,6 +32,23 @@ export default function RsiChart({ stock, history, timeframeLabel }) {
   const valueBadgeHeight = 20
   const currentX = xScale(Math.max(currentIndex, 0))
   const currentY = yScale(current)
+  const {
+    chartContainerRef,
+    handlePointerDown,
+    handlePointerUp,
+    handleViewportPointerMove,
+    isDragging,
+    isFullView,
+    resetVisibleWindow,
+  } = useMarketChartViewportInteraction({
+    chartWidth: width,
+    onVisibleWindowChange,
+    onVisibleWindowReset,
+    plotLeft: padding.left,
+    plotWidth,
+    totalCandles: fullCandleCount ?? history.candles.length,
+    visibleWindow,
+  })
 
   return (
     <section className="market-panel market-study-panel rsi-study-panel" aria-labelledby="rsi-study-title">
@@ -37,10 +66,29 @@ export default function RsiChart({ stock, history, timeframeLabel }) {
             </IndicatorInfoTip>
           </div>
         </div>
-        <span className="rsi-scale-note">Fixed scale · 0–100</span>
+        <div className="indicator-chart-actions">
+          <button
+            className="market-chart-reset-button"
+            type="button"
+            onClick={resetVisibleWindow}
+            disabled={isFullView}
+          >
+            Reset view
+          </button>
+        </div>
       </div>
 
-      <div className="study-chart rsi-chart" role="img" aria-label={`${stock.symbol} ${timeframeLabel} RSI 14 chart from 0 to 100`}>
+      <div
+        ref={chartContainerRef}
+        className={`study-chart rsi-chart ${isDragging ? 'is-dragging' : ''}`.trim()}
+        role="img"
+        aria-label={`${stock.symbol} ${timeframeLabel} RSI 14 chart from 0 to 100`}
+        onDoubleClick={resetVisibleWindow}
+        onPointerCancel={handlePointerUp}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handleViewportPointerMove}
+        onPointerUp={handlePointerUp}
+      >
         <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
           <rect
             className="rsi-zone is-overbought"

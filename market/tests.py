@@ -21,12 +21,13 @@ class SecurityModelTests(TestCase):
         self.assertEqual(security.currency, 'USD')
         self.assertEqual(str(security), 'AAPL - Apple Inc.')
 
-    def test_security_symbol_must_be_unique(self):
+    def test_security_symbol_and_mic_code_must_be_unique_together(self):
         Security.objects.create(
             symbol='MSFT',
             name='Microsoft Corporation',
             asset_type=Security.AssetType.STOCK,
             exchange='NASDAQ',
+            mic_code='XNAS',
             currency='USD',
         )
 
@@ -36,8 +37,21 @@ class SecurityModelTests(TestCase):
                 name='Microsoft Duplicate',
                 asset_type=Security.AssetType.STOCK,
                 exchange='NASDAQ',
+                mic_code='XNAS',
                 currency='USD',
             )
+
+        other_listing = Security.objects.create(
+            symbol='MSFT',
+            name='Microsoft Other Listing',
+            asset_type=Security.AssetType.STOCK,
+            exchange='NYSE',
+            mic_code='XNYS',
+            currency='USD',
+        )
+
+        self.assertEqual(other_listing.symbol, 'MSFT')
+        self.assertEqual(other_listing.mic_code, 'XNYS')
 
     def test_seed_securities_command_is_idempotent(self):
         Security.objects.create(

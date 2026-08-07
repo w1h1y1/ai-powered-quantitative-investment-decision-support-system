@@ -1,8 +1,35 @@
 import { apiRequest } from './apiClient'
 
+let portfolioSummaryRequestPromise = null
+const portfolioPerformanceRequestPromises = new Map()
+
+function buildPortfolioPerformancePath(range, refresh = false) {
+  const params = new URLSearchParams()
+  params.set('range', range || '3M')
+  if (refresh) params.set('refresh', '1')
+  return `/api/portfolio/performance/?${params.toString()}`
+}
+
 export const portfolioApi = {
   summary() {
-    return apiRequest('/api/portfolio/summary/')
+    if (!portfolioSummaryRequestPromise) {
+      portfolioSummaryRequestPromise = apiRequest('/api/portfolio/summary/', { cache: 'no-store' })
+        .finally(() => {
+          portfolioSummaryRequestPromise = null
+        })
+    }
+    return portfolioSummaryRequestPromise
+  },
+  performance(range, options = {}) {
+    const path = buildPortfolioPerformancePath(range, options.refresh)
+    if (!portfolioPerformanceRequestPromises.has(path)) {
+      const requestPromise = apiRequest(path, { cache: 'no-store' })
+        .finally(() => {
+          portfolioPerformanceRequestPromises.delete(path)
+        })
+      portfolioPerformanceRequestPromises.set(path, requestPromise)
+    }
+    return portfolioPerformanceRequestPromises.get(path)
   },
   list() {
     return apiRequest('/api/portfolios/')
@@ -14,6 +41,11 @@ export const portfolioApi = {
         name: payload.name,
         available_funds: payload.available_funds,
       },
+    })
+  },
+  resetTestData() {
+    return apiRequest('/api/portfolio/reset-test-data/', {
+      method: 'POST',
     })
   },
 }

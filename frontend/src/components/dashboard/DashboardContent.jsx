@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Icon from '../Icon'
 import { marketDataApi } from '../../services/marketDataApi'
+import { portfolioApi } from '../../services/portfolioApi'
 import { securityApi } from '../../services/securityApi'
+import {
+  buildDashboardWatchlistItems,
+  loadUserWatchlistData,
+  watchlistDataChangedEventName,
+} from '../../services/watchlistDataService'
+import { normalizePortfolioSummary } from '../portfolio/portfolioSummaryModel'
 import MarketSummary from './MarketSummary'
 import PortfolioSummary from './PortfolioSummary'
 import PriceChart from './PriceChart'
@@ -9,14 +16,20 @@ import TechnicalIndicators from './TechnicalIndicators'
 import Watchlist from './Watchlist'
 import {
   buildDashboardPriceChart,
+  buildDashboardTechnicalIndicators,
   buildMarketDataRequestParams,
   createDefaultCustomMarketDataRange,
   dashboardMarketDataRanges,
   filterSecurityOptions,
   getActiveSecurities,
+  getDefaultMarketDataInterval,
+  getMarketDataDebugSummary,
+  getMarketSummaryDebugSummary,
   getTodayDateInputValue,
   isCustomMarketDataRange,
+  marketDataResponseMatchesRequest,
   normalizeMarketData,
+  normalizeMarketSummary,
   readStoredSecurityId,
   resolveSelectedSecurityId,
   shouldApplyMarketDataResponse,
@@ -70,7 +83,7 @@ function SecuritySelectorPanel({
         </div>
         <div className="dashboard-security-source" aria-label="Dashboard data sources">
           <strong>Security API</strong>
-          <span>Daily OHLCV from market-data API</span>
+          <span>OHLCV from market-data API</span>
         </div>
       </div>
 
@@ -135,25 +148,167 @@ function getMarketDataLoadMessage(error) {
   if (error?.status === 401 || error?.status === 403) {
     return 'Your session has expired. Please sign in again.'
   }
-  if (error?.status === 503) {
-    return 'Daily market data is temporarily unavailable. Please try again later.'
+  if (error?.status === 0) {
+    return 'Unable to connect to the server. Please try again later.'
   }
-  return 'Unable to load daily market data. Please try again.'
+  if ([400, 404, 429, 503].includes(error?.status)) {
+    return error?.message || 'Market data is temporarily unavailable. Please try again later.'
+  }
+  return 'Unable to load market data. Please try again.'
 }
 
-export default function DashboardContent({ data, onOpenWatchlist }) {
+function getMarketSummaryLoadMessage(error) {
+  if (error?.status === 401 || error?.status === 403) {
+    return 'Your session has expired. Please sign in again.'
+  }
+  if (error?.status === 0) {
+    return 'Unable to connect to the server. Please try again later.'
+  }
+  return 'Unable to load market summary. Please try again later.'
+}
+
+function getWatchlistLoadMessage(error) {
+  if (error?.status === 401 || error?.status === 403) {
+    return 'Your session has expired. Please sign in again.'
+  }
+  if (error?.status === 0) {
+    return 'Unable to connect to the server. Please try again later.'
+  }
+  return error?.message || 'Unable to load your Watchlist.'
+}
+
+function getPortfolioLoadMessage(error) {
+  if (error?.status === 401 || error?.status === 403) {
+    return 'Your session has expired. Please sign in again.'
+  }
+  if (error?.status === 0) {
+    return 'Unable to connect to the server. Please try again later.'
+  }
+  return error?.message || 'Unable to load Portfolio Summary.'
+}
+
+export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlist }) {
+  const [marketSummary, setMarketSummary] = useState(() => normalizeMarketSummary({ items: [] }))
+  const [isMarketSummaryLoading, setIsMarketSummaryLoading] = useState(true)
+  const [marketSummaryError, setMarketSummaryError] = useState('')
   const [securities, setSecurities] = useState([])
   const [selectedSecurityId, setSelectedSecurityId] = useState(() => readStoredSecurityId())
   const [selectedRange, setSelectedRange] = useState(dashboardMarketDataRanges[0])
+  const [selectedInterval, setSelectedInterval] = useState(() => getDefaultMarketDataInterval(dashboardMarketDataRanges[0]))
   const [customRange, setCustomRange] = useState(() => createDefaultCustomMarketDataRange())
   const [customRangeDraft, setCustomRangeDraft] = useState(() => createDefaultCustomMarketDataRange())
+  const [isCustomRangeOpen, setIsCustomRangeOpen] = useState(false)
   const [securityQuery, setSecurityQuery] = useState('')
   const [isSecurityLoading, setIsSecurityLoading] = useState(true)
   const [securityError, setSecurityError] = useState('')
   const [marketData, setMarketData] = useState(null)
   const [isMarketDataLoading, setIsMarketDataLoading] = useState(false)
   const [marketDataError, setMarketDataError] = useState('')
+  const [watchlistItems, setWatchlistItems] = useState([])
+  const [isWatchlistLoading, setIsWatchlistLoading] = useState(true)
+  const [watchlistError, setWatchlistError] = useState('')
+  const [portfolioSummary, setPortfolioSummary] = useState(null)
+  const [isPortfolioSummaryLoading, setIsPortfolioSummaryLoading] = useState(true)
+  const [portfolioSummaryError, setPortfolioSummaryError] = useState('')
+  const marketSummaryRequestIdRef = useRef(0)
   const marketDataRequestIdRef = useRef(0)
+  const watchlistRequestIdRef = useRef(0)
+  const portfolioSummaryRequestIdRef = useRef(0)
+
+  useEffect(() => {
+    let isMounted = true
+    const requestId = marketSummaryRequestIdRef.current + 1
+    marketSummaryRequestIdRef.current = requestId
+
+    setIsMarketSummaryLoading(true)
+    setMarketSummaryError('')
+
+    marketDataApi.summary()
+      .then((response) => {
+        if (!isMounted || marketSummaryRequestIdRef.current !== requestId) return
+        const normalizedMarketSummary = normalizeMarketSummary(response)
+        if (import.meta.env.DEV) {
+          console.debug('[market-summary]', getMarketSummaryDebugSummary(response, normalizedMarketSummary))
+        }
+        setMarketSummary(normalizedMarketSummary)
+      })
+      .catch((error) => {
+        if (!isMounted || marketSummaryRequestIdRef.current !== requestId) return
+        setMarketSummary(normalizeMarketSummary({ items: [] }))
+        setMarketSummaryError(getMarketSummaryLoadMessage(error))
+      })
+      .finally(() => {
+        if (isMounted && marketSummaryRequestIdRef.current === requestId) {
+          setIsMarketSummaryLoading(false)
+        }
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  const loadDashboardWatchlist = useCallback(async ({ force = false } = {}) => {
+    const requestId = watchlistRequestIdRef.current + 1
+    watchlistRequestIdRef.current = requestId
+
+    setIsWatchlistLoading(true)
+    setWatchlistError('')
+
+    try {
+      const response = await loadUserWatchlistData({ force })
+      if (watchlistRequestIdRef.current !== requestId) return
+      setWatchlistItems(buildDashboardWatchlistItems(response.selectedStocks))
+      setWatchlistError(response.quoteError && !response.selectedStocks.length ? response.quoteError : '')
+    } catch (error) {
+      if (watchlistRequestIdRef.current !== requestId) return
+      setWatchlistItems([])
+      setWatchlistError(getWatchlistLoadMessage(error))
+    } finally {
+      if (watchlistRequestIdRef.current === requestId) {
+        setIsWatchlistLoading(false)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    loadDashboardWatchlist()
+
+    const handleWatchlistChanged = () => {
+      loadDashboardWatchlist({ force: true })
+    }
+
+    window.addEventListener(watchlistDataChangedEventName, handleWatchlistChanged)
+    return () => {
+      window.removeEventListener(watchlistDataChangedEventName, handleWatchlistChanged)
+    }
+  }, [loadDashboardWatchlist])
+
+  const loadDashboardPortfolioSummary = useCallback(async () => {
+    const requestId = portfolioSummaryRequestIdRef.current + 1
+    portfolioSummaryRequestIdRef.current = requestId
+
+    setIsPortfolioSummaryLoading(true)
+    setPortfolioSummaryError('')
+
+    try {
+      const response = await portfolioApi.summary()
+      if (portfolioSummaryRequestIdRef.current !== requestId) return
+      setPortfolioSummary(normalizePortfolioSummary(response))
+    } catch (error) {
+      if (portfolioSummaryRequestIdRef.current !== requestId) return
+      setPortfolioSummary(null)
+      setPortfolioSummaryError(getPortfolioLoadMessage(error))
+    } finally {
+      if (portfolioSummaryRequestIdRef.current === requestId) {
+        setIsPortfolioSummaryLoading(false)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    loadDashboardPortfolioSummary()
+  }, [loadDashboardPortfolioSummary])
 
   const loadSecurities = useCallback(async () => {
     setIsSecurityLoading(true)
@@ -230,18 +385,42 @@ export default function DashboardContent({ data, onOpenWatchlist }) {
     setMarketDataError('')
     setMarketData(null)
 
-    marketDataApi.daily(buildMarketDataRequestParams({
+    const requestParams = buildMarketDataRequestParams({
       security: selectedSecurity,
       range: selectedRange,
       customRange,
-    }))
+      interval: selectedInterval,
+    })
+
+    marketDataApi.daily(requestParams)
       .then((response) => {
         if (
-          isMounted
-          && shouldApplyMarketDataResponse(marketDataRequestIdRef.current, requestId)
-        ) {
-          setMarketData(normalizeMarketData(response))
+          !isMounted
+          || !shouldApplyMarketDataResponse(marketDataRequestIdRef.current, requestId)
+        ) return
+
+        if (!marketDataResponseMatchesRequest(response, requestParams)) {
+          setMarketData(null)
+          setMarketDataError('Received market data did not match the selected security or interval. Please try again.')
+          return
         }
+
+        const normalizedMarketData = normalizeMarketData(response)
+        if (import.meta.env.DEV) {
+          const debugPriceChart = buildDashboardPriceChart({
+            security: selectedSecurity,
+            marketData: normalizedMarketData,
+            range: selectedRange,
+            requestedInterval: selectedInterval,
+          })
+          console.debug('[market-data]', getMarketDataDebugSummary({
+            request: requestParams,
+            response,
+            marketData: normalizedMarketData,
+            chart: debugPriceChart,
+          }))
+        }
+        setMarketData(normalizedMarketData)
       })
       .catch((error) => {
         if (
@@ -263,7 +442,7 @@ export default function DashboardContent({ data, onOpenWatchlist }) {
     return () => {
       isMounted = false
     }
-  }, [customRange, customRangeMaxDate, selectedRange, selectedSecurity])
+  }, [customRange, customRangeMaxDate, selectedInterval, selectedRange, selectedSecurity])
 
   const selectedPriceChart = useMemo(
     () => selectedSecurity
@@ -271,11 +450,16 @@ export default function DashboardContent({ data, onOpenWatchlist }) {
         security: selectedSecurity,
         marketData,
         range: selectedRange,
+        requestedInterval: selectedInterval,
         isLoading: isMarketDataLoading,
         error: marketDataError,
       })
       : data.priceChart,
-    [data.priceChart, isMarketDataLoading, marketData, marketDataError, selectedRange, selectedSecurity],
+    [data.priceChart, isMarketDataLoading, marketData, marketDataError, selectedInterval, selectedRange, selectedSecurity],
+  )
+  const selectedTechnicalIndicators = useMemo(
+    () => buildDashboardTechnicalIndicators(selectedPriceChart),
+    [selectedPriceChart],
   )
 
   const updateSelectedSecurity = (securityId) => {
@@ -290,17 +474,56 @@ export default function DashboardContent({ data, onOpenWatchlist }) {
     }))
   }
 
+  const updateSelectedRange = (range) => {
+    if (isCustomMarketDataRange(range)) {
+      setCustomRangeDraft(customRange)
+      setIsCustomRangeOpen(true)
+      return
+    }
+
+    setIsCustomRangeOpen(false)
+    setSelectedRange(range)
+    setSelectedInterval(getDefaultMarketDataInterval(range))
+  }
+
+  const updateSelectedInterval = (interval) => {
+    setSelectedInterval(interval)
+    setCustomRangeDraft((currentRange) => ({
+      ...currentRange,
+      interval,
+    }))
+    if (isCustomMarketDataRange(selectedRange)) {
+      setCustomRange((currentRange) => ({
+        ...currentRange,
+        interval,
+      }))
+    }
+  }
+
+  const cancelCustomRange = () => {
+    setCustomRangeDraft(customRange)
+    setIsCustomRangeOpen(false)
+  }
+
   const applyCustomRange = () => {
     const validationError = validateCustomMarketDataRange(customRangeDraft, customRangeMaxDate)
     if (validationError) return
 
     setCustomRange(customRangeDraft)
+    setSelectedInterval(customRangeDraft.interval)
     setSelectedRange('Custom')
+    setIsCustomRangeOpen(false)
   }
 
   return (
     <main className="main-content dashboard-main">
-      <MarketSummary items={data.marketSummary} />
+      <MarketSummary
+        error={marketSummaryError}
+        isLoading={isMarketSummaryLoading}
+        items={marketSummary.items}
+        lastUpdatedLabel={marketSummary.lastUpdatedLabel}
+        statusLabel={marketSummary.statusLabel}
+      />
 
       {isSecurityLoading ? (
         <DashboardSecurityState>
@@ -339,14 +562,30 @@ export default function DashboardContent({ data, onOpenWatchlist }) {
             customRange={customRangeDraft}
             customRangeError={customRangeDraftError}
             customRangeMaxDate={customRangeMaxDate}
+            isCustomRangeOpen={isCustomRangeOpen}
             onCustomRangeApply={applyCustomRange}
+            onCustomRangeCancel={cancelCustomRange}
             onCustomRangeChange={updateCustomRangeDraft}
+            onIntervalChange={updateSelectedInterval}
             selectedRange={selectedRange}
-            onRangeChange={setSelectedRange}
+            selectedInterval={selectedInterval}
+            onRangeChange={updateSelectedRange}
           />
-          <TechnicalIndicators indicators={data.technicalIndicators} />
-          <Watchlist items={data.watchlist} onViewAll={onOpenWatchlist} />
-          <PortfolioSummary portfolio={data.portfolioSummary} />
+          <TechnicalIndicators indicators={selectedTechnicalIndicators} />
+          <Watchlist
+            error={watchlistError}
+            isLoading={isWatchlistLoading}
+            items={watchlistItems}
+            onRetry={() => loadDashboardWatchlist({ force: true })}
+            onViewAll={onOpenWatchlist}
+          />
+          <PortfolioSummary
+            error={portfolioSummaryError}
+            isLoading={isPortfolioSummaryLoading}
+            onRetry={loadDashboardPortfolioSummary}
+            portfolio={portfolioSummary}
+            onViewDetails={onOpenPortfolio}
+          />
         </div>
       )}
     </main>

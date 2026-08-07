@@ -9,15 +9,18 @@ export default function BacktestConfiguration({
   assets,
   strategies,
   selectedAsset,
+  selectedBenchmark,
   selectedStrategy,
   config,
   errors,
+  isAssetsLoading,
   isLoading,
   onChange,
   onSubmit,
 }) {
   const isInvalid = Object.keys(errors).length > 0
   const startDateError = errors.startDate ?? errors.dateRange
+  const controlsDisabled = isLoading || isAssetsLoading
 
   return (
     <section className="backtest-card backtest-config-card" aria-labelledby="backtest-config-title">
@@ -25,11 +28,11 @@ export default function BacktestConfiguration({
         <div>
           <p>Simulation setup</p>
           <h2 id="backtest-config-title">Backtest Configuration</h2>
-          <span>Configure a rule-based historical simulation using the current demo universe.</span>
+          <span>Configure the real historical-data Market-Regime Core and Swing strategy.</span>
         </div>
-        <div className="demo-data-status" aria-label="Demo data, last updated at 16:00">
-          <strong>Demo Data</strong>
-          <span>Last updated: 16:00</span>
+        <div className="demo-data-status" aria-label="Real historical-data backtest">
+          <strong>Real Historical Data</strong>
+          <span>Daily OHLCV from Django API</span>
         </div>
       </div>
 
@@ -42,13 +45,14 @@ export default function BacktestConfiguration({
                 id="backtest-asset"
                 value={config.symbol}
                 onChange={(event) => onChange('symbol', event.target.value)}
-                disabled={isLoading}
+                disabled={controlsDisabled}
                 aria-invalid={Boolean(errors.symbol)}
                 aria-describedby={errors.symbol ? 'backtest-asset-error' : undefined}
               >
+                {isAssetsLoading && <option value={config.symbol}>Loading securities...</option>}
                 {assets.map((asset) => (
                   <option value={asset.symbol} key={asset.symbol}>
-                    {asset.symbol} — {asset.asset}
+                    {asset.symbol} - {asset.asset}
                   </option>
                 ))}
               </select>
@@ -59,13 +63,38 @@ export default function BacktestConfiguration({
             <FieldError id="backtest-asset-error" message={errors.symbol} />
           </label>
 
+          <label className="backtest-field is-benchmark" htmlFor="backtest-benchmark">
+            <span>Market benchmark</span>
+            <div className="backtest-asset-control">
+              <select
+                id="backtest-benchmark"
+                value={config.benchmarkSymbol}
+                onChange={(event) => onChange('benchmarkSymbol', event.target.value)}
+                disabled={controlsDisabled}
+                aria-invalid={Boolean(errors.benchmarkSymbol)}
+                aria-describedby={errors.benchmarkSymbol ? 'backtest-benchmark-error' : undefined}
+              >
+                {isAssetsLoading && <option value={config.benchmarkSymbol}>Loading securities...</option>}
+                {assets.map((asset) => (
+                  <option value={asset.symbol} key={asset.symbol}>
+                    {asset.symbol} - {asset.asset}
+                  </option>
+                ))}
+              </select>
+              <strong className={`backtest-asset-type is-${selectedBenchmark?.type.toLowerCase() ?? 'etf'}`}>
+                {selectedBenchmark?.type ?? 'ETF'}
+              </strong>
+            </div>
+            <FieldError id="backtest-benchmark-error" message={errors.benchmarkSymbol} />
+          </label>
+
           <label className="backtest-field is-strategy" htmlFor="backtest-strategy">
             <span>Strategy</span>
             <select
               id="backtest-strategy"
               value={config.strategyId}
               onChange={(event) => onChange('strategyId', event.target.value)}
-              disabled={isLoading}
+              disabled={controlsDisabled}
               aria-invalid={Boolean(errors.strategyId)}
               aria-describedby={errors.strategyId ? 'backtest-strategy-error' : undefined}
             >
@@ -83,7 +112,7 @@ export default function BacktestConfiguration({
               type="date"
               value={config.startDate}
               onChange={(event) => onChange('startDate', event.target.value)}
-              disabled={isLoading}
+              disabled={controlsDisabled}
               aria-invalid={Boolean(startDateError)}
               aria-describedby={startDateError ? 'backtest-start-date-error' : undefined}
             />
@@ -97,7 +126,7 @@ export default function BacktestConfiguration({
               type="date"
               value={config.endDate}
               onChange={(event) => onChange('endDate', event.target.value)}
-              disabled={isLoading}
+              disabled={controlsDisabled}
               aria-invalid={Boolean(errors.endDate)}
               aria-describedby={errors.endDate ? 'backtest-end-date-error' : undefined}
             />
@@ -115,7 +144,7 @@ export default function BacktestConfiguration({
                 step="100"
                 value={config.initialCapital}
                 onChange={(event) => onChange('initialCapital', event.target.value)}
-                disabled={isLoading}
+                disabled={controlsDisabled}
                 aria-invalid={Boolean(errors.initialCapital)}
                 aria-describedby={errors.initialCapital ? 'backtest-capital-error' : undefined}
               />
@@ -124,22 +153,22 @@ export default function BacktestConfiguration({
           </label>
 
           <label className="backtest-field" htmlFor="backtest-fee">
-            <span>Trading fee</span>
-            <div className="backtest-input-suffix">
+            <span>Transaction fee</span>
+            <div className="backtest-input-prefix">
+              <b>$</b>
               <input
                 id="backtest-fee"
                 type="number"
                 min="0"
                 step="0.01"
-                value={config.tradingFee}
-                onChange={(event) => onChange('tradingFee', event.target.value)}
-                disabled={isLoading}
-                aria-invalid={Boolean(errors.tradingFee)}
-                aria-describedby={errors.tradingFee ? 'backtest-fee-error' : undefined}
+                value={config.transactionFee}
+                onChange={(event) => onChange('transactionFee', event.target.value)}
+                disabled={controlsDisabled}
+                aria-invalid={Boolean(errors.transactionFee)}
+                aria-describedby={errors.transactionFee ? 'backtest-fee-error' : undefined}
               />
-              <b>%</b>
             </div>
-            <FieldError id="backtest-fee-error" message={errors.tradingFee} />
+            <FieldError id="backtest-fee-error" message={errors.transactionFee} />
           </label>
         </div>
 
@@ -148,13 +177,13 @@ export default function BacktestConfiguration({
             strategy={selectedStrategy}
             config={config}
             errors={errors}
-            disabled={isLoading}
+            disabled={controlsDisabled}
             onChange={onChange}
           />
 
           <div className="backtest-config-actions">
-            <span>Deterministic demo results, not live market execution.</span>
-            <button type="submit" disabled={isInvalid || isLoading}>
+            <span>Real historical-data backtest. Core and Swing signals execute on the next trading day open.</span>
+            <button type="submit" disabled={isInvalid || controlsDisabled}>
               {isLoading && <i className="backtest-loading-spinner" aria-hidden="true" />}
               {isLoading ? 'Running Backtest...' : 'Run Backtest'}
             </button>

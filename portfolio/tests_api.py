@@ -350,8 +350,8 @@ class CoreApiPermissionTests(APITestCase):
         response = self.client.get(reverse('transaction-list'))
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual([item['id'] for item in response.data], [self.transaction_a.id])
-        self.assertEqual(response.data[0]['security']['symbol'], 'AAPL')
+        self.assertEqual([item['id'] for item in response.data['results']], [self.transaction_a.id])
+        self.assertEqual(response.data['results'][0]['security']['symbol'], 'AAPL')
 
     def test_user_a_cannot_access_modify_or_delete_user_b_transaction(self):
         self.authenticate_as(self.user_a)

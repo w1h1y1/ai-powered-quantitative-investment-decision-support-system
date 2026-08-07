@@ -13,13 +13,7 @@ import WatchlistContent from './components/watchlist/WatchlistContent'
 import { useAuth } from './context/AuthContext'
 import PredictionLabPage from './pages/PredictionLabPage'
 import AuthPage from './pages/AuthPage'
-import {
-  marketAnalysisStocks,
-  marketBarIntervals,
-  marketDefaultIntervals,
-  marketOverlayOptions,
-  marketTimeRanges,
-} from './data/marketAnalysisData'
+import { marketAnalysisStocks } from './data/marketAnalysisData'
 import {
   dashboardData,
   mockSystemStatus,
@@ -78,10 +72,10 @@ function redirectToCanonicalDevelopmentHost() {
 redirectToCanonicalDevelopmentHost()
 
 export default function App() {
-  const { isAuthenticated, isLoading, login, logout, register, user } = useAuth()
+  const { authError, isAuthenticated, isLoading, login, logout, register, user } = useAuth()
   const [activeSection, setActiveSection] = useState(() => getSectionFromLocation())
   const [authMode, setAuthMode] = useState(() => getAuthModeFromLocation())
-  const [selectedAnalysisSymbol, setSelectedAnalysisSymbol] = useState(marketAnalysisStocks[0].symbol)
+  const [selectedAnalysisSymbol, setSelectedAnalysisSymbol] = useState('')
 
   const activeNavigationItem = useMemo(
     () => navigationItems.find((item) => item.id === activeSection) ?? navigationItems[0],
@@ -110,6 +104,7 @@ export default function App() {
 
   useEffect(() => {
     if (isLoading) return
+    if (authError && !isAuthenticated) return
 
     const currentPath = normalizePath(window.location.pathname)
 
@@ -125,7 +120,7 @@ export default function App() {
       window.history.replaceState({ section: 'dashboard' }, '', '/')
       setActiveSection('dashboard')
     }
-  }, [isAuthenticated, isLoading])
+  }, [authError, isAuthenticated, isLoading])
 
   const navigateToSection = (sectionId) => {
     if (!isAuthenticated) {
@@ -203,6 +198,31 @@ export default function App() {
   }
 
   if (!isAuthenticated) {
+    if (authError) {
+      return (
+        <main className="auth-screen">
+          <section className="auth-panel auth-loading" aria-live="polite">
+            <div className="auth-brand">
+              <span className="brand-mark" aria-hidden="true">
+                <Icon name="brand" />
+              </span>
+              <span>
+                <strong>AI Quant</strong>
+                <small>Investment Intelligence</small>
+              </span>
+            </div>
+            <div className="auth-heading">
+              <p>Server unavailable</p>
+              <h1>Unable to verify your session</h1>
+            </div>
+            <div className="auth-error" role="alert">
+              {authError}
+            </div>
+          </section>
+        </main>
+      )
+    }
+
     return (
       <AuthPage
         mode={authMode}
@@ -233,24 +253,20 @@ export default function App() {
         {activeNavigationItem.id === 'dashboard' ? (
           <DashboardContent
             data={dashboardData}
+            onOpenPortfolio={() => navigateToSection('portfolio')}
             onOpenWatchlist={() => navigateToSection('watchlist')}
           />
         ) : activeNavigationItem.id === 'market-analysis' ? (
           <MarketAnalysisContent
-            stocks={marketAnalysisStocks}
-            ranges={marketTimeRanges}
-            intervals={marketBarIntervals}
-            defaultIntervals={marketDefaultIntervals}
-            overlayOptions={marketOverlayOptions}
             selectedSymbol={selectedAnalysisSymbol}
             onSelectedSymbolChange={setSelectedAnalysisSymbol}
           />
         ) : activeNavigationItem.id === 'watchlist' ? (
-          <WatchlistContent stocks={marketAnalysisStocks} onViewAnalysis={openMarketAnalysis} />
+          <WatchlistContent onViewAnalysis={openMarketAnalysis} />
         ) : activeNavigationItem.id === 'portfolio' ? (
           <PortfolioContent key={user?.id ?? 'anonymous'} stocks={marketAnalysisStocks} onViewAnalysis={openMarketAnalysis} />
         ) : activeNavigationItem.id === 'strategy-backtesting' ? (
-          <BacktestContent stocks={marketAnalysisStocks} />
+          <BacktestContent />
         ) : activeNavigationItem.id === 'ai-insights' ? (
           <AIInsightsContent onNavigate={navigateToSection} />
         ) : activeNavigationItem.id === 'prediction-lab' ? (

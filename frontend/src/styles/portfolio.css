@@ -229,6 +229,46 @@
   overflow: visible;
 }
 
+.portfolio-performance-state {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 7px;
+  min-height: 268px;
+  color: #7b8799;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.portfolio-performance-state strong {
+  color: #334056;
+  font-size: 12px;
+}
+
+.portfolio-performance-state.is-error strong {
+  color: #b84c5e;
+}
+
+.portfolio-performance-state button {
+  margin-top: 3px;
+  border: 0;
+  border-radius: 999px;
+  padding: 7px 14px;
+  color: #ffffff;
+  background: #6877f5;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.portfolio-performance-warning {
+  margin: 9px 0 0;
+  color: #9c6a13;
+  font-size: 10px;
+  font-weight: 700;
+}
+
 .portfolio-chart-grid-line {
   stroke: #edf0f5;
   stroke-width: 1;
@@ -527,9 +567,30 @@
   background: rgba(104, 119, 245, 0.2);
 }
 
+.portfolio-card-action.is-danger {
+  color: #c34f60;
+  background: rgba(239, 106, 120, 0.1);
+}
+
+.portfolio-card-action.is-danger:hover {
+  color: #a73e4f;
+  background: rgba(239, 106, 120, 0.16);
+}
+
+.portfolio-card-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 .portfolio-card-action:focus-visible,
+.portfolio-transaction-range-buttons button:focus-visible,
+.portfolio-transaction-year-filter input:focus-visible,
+.portfolio-transaction-custom-range input:focus-visible,
+.portfolio-transactions-pagination button:focus-visible,
+.portfolio-transactions-pagination select:focus-visible,
 .portfolio-row-actions button:focus-visible,
 .portfolio-empty-state button:focus-visible,
+.portfolio-performance-state button:focus-visible,
 .portfolio-setup-form input:focus-visible,
 .portfolio-dialog button:focus-visible,
 .portfolio-dialog input:focus-visible,
@@ -579,6 +640,148 @@
 
 .portfolio-transactions-table {
   min-width: 760px;
+}
+
+.portfolio-transaction-filters {
+  display: flex;
+  gap: 9px;
+  margin: 12px 0 0;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.portfolio-transaction-range-buttons {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.portfolio-transaction-range-buttons button {
+  min-height: 28px;
+  padding: 0 8px;
+  color: #657086;
+  background: #f5f7fb;
+  border: 1px solid #e3e7f0;
+  border-radius: 7px;
+  font-size: 8px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.portfolio-transaction-range-buttons button:hover,
+.portfolio-transaction-range-buttons button.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: rgba(104, 119, 245, 0.28);
+}
+
+.portfolio-transaction-year-filter,
+.portfolio-transaction-custom-range label,
+.portfolio-transactions-pagination label {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  color: #8c96a7;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.portfolio-transaction-year-filter input,
+.portfolio-transaction-custom-range input,
+.portfolio-transactions-pagination select {
+  min-height: 28px;
+  color: #445066;
+  background: #ffffff;
+  border: 1px solid #e1e6ef;
+  border-radius: 7px;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.portfolio-transaction-year-filter input {
+  width: 72px;
+  padding: 0 7px;
+}
+
+.portfolio-transaction-custom-range {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.portfolio-transaction-custom-range input {
+  padding: 0 6px;
+}
+
+.portfolio-transactions-pagination {
+  display: flex;
+  gap: 12px;
+  margin: 12px 0 0;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  color: #778296;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.portfolio-transactions-pagination > div {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+}
+
+.portfolio-transactions-pagination select {
+  padding: 0 6px;
+}
+
+.portfolio-transactions-pagination button {
+  min-height: 28px;
+  padding: 0 9px;
+  color: #657086;
+  background: #f5f7fb;
+  border: 1px solid #e3e7f0;
+  border-radius: 7px;
+  font-size: 8px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.portfolio-transactions-pagination button:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.portfolio-transactions-pagination button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.portfolio-transactions-results {
+  position: relative;
+  min-height: 220px;
+}
+
+.portfolio-transactions-results.is-loading {
+  cursor: progress;
+}
+
+.portfolio-transactions-loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  min-height: 100%;
+  place-items: center;
+  color: #657086;
+  background: rgba(255, 255, 255, 0.72);
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 750;
+  pointer-events: none;
 }
 
 .portfolio-holdings-table th,
@@ -809,6 +1012,10 @@
 .portfolio-row-actions button.is-danger:hover {
   color: #a73e4f;
   background: rgba(239, 106, 120, 0.16);
+}
+
+.portfolio-transaction-actions {
+  justify-content: flex-start;
 }
 
 .portfolio-empty-state {
@@ -1080,6 +1287,68 @@
 .portfolio-dialog select[aria-invalid="true"]:focus,
 .portfolio-dialog textarea[aria-invalid="true"]:focus {
   box-shadow: 0 0 0 3px rgba(195, 79, 96, 0.13);
+}
+
+.portfolio-security-search-results {
+  margin-top: 8px;
+  color: #8993a4;
+  font-size: 10px;
+}
+
+.portfolio-security-search-results p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.portfolio-security-search-results ul {
+  display: grid;
+  max-height: 196px;
+  gap: 7px;
+  padding: 0;
+  margin: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.portfolio-security-search-results button {
+  display: grid;
+  width: 100%;
+  gap: 3px;
+  padding: 9px 10px;
+  color: #687386;
+  text-align: left;
+  background: #f8f9fc;
+  border: 1px solid #e3e7ee;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.portfolio-security-search-results button:hover,
+.portfolio-security-search-results button.is-selected {
+  color: #354056;
+  background: #ffffff;
+  border-color: rgba(104, 119, 245, 0.45);
+}
+
+.portfolio-security-search-results strong {
+  color: #2f3a4f;
+  font-size: 11px;
+}
+
+.portfolio-security-search-results span,
+.portfolio-security-search-results small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.portfolio-security-search-results span {
+  color: #626e82;
+}
+
+.portfolio-security-search-results small {
+  color: #8993a4;
+  font-size: 9px;
 }
 
 .portfolio-dialog-field-error {

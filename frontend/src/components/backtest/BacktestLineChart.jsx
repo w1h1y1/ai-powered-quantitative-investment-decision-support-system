@@ -37,7 +37,7 @@ export default function BacktestLineChart({ variant, points }) {
   const geometry = useMemo(() => {
     const values = isDrawdown
       ? points.map((point) => point.drawdown)
-      : points.flatMap((point) => [point.portfolioValue, point.benchmarkValue])
+      : points.map((point) => point.portfolioValue)
     const rawMinimum = Math.min(...values)
     const rawMaximum = Math.max(...values)
     const minimum = isDrawdown
@@ -60,7 +60,6 @@ export default function BacktestLineChart({ variant, points }) {
       plotBottom: chartPadding.top + plotHeight,
       tickIndices: getTickIndices(points.length),
       portfolioPath: isDrawdown ? '' : createLinePath(points.map((point) => point.portfolioValue), xScale, yScale),
-      benchmarkPath: isDrawdown ? '' : createLinePath(points.map((point) => point.benchmarkValue), xScale, yScale),
       drawdownPath: isDrawdown ? createLinePath(points.map((point) => point.drawdown), xScale, yScale) : '',
     }
   }, [chartHeight, isDrawdown, points])
@@ -96,8 +95,8 @@ export default function BacktestLineChart({ variant, points }) {
           <h2 id={`backtest-${variant}-title`}>{isDrawdown ? 'Drawdown' : 'Equity Curve'}</h2>
           <span>
             {isDrawdown
-              ? 'Peak-to-trough decline in the simulated strategy value.'
-              : 'Simulated portfolio value compared with a buy-and-hold benchmark.'}
+              ? 'Peak-to-trough decline in the real historical strategy equity.'
+              : 'Strategy equity calculated from daily OHLCV, executed trades, cash and marked holdings.'}
           </span>
         </div>
       </div>
@@ -106,10 +105,7 @@ export default function BacktestLineChart({ variant, points }) {
         {isDrawdown ? (
           <span><i className="is-drawdown" aria-hidden="true" />Drawdown</span>
         ) : (
-          <>
-            <span><i className="is-portfolio" aria-hidden="true" />Portfolio value</span>
-            <span><i className="is-benchmark" aria-hidden="true" />Buy-and-hold benchmark</span>
-          </>
+          <span><i className="is-portfolio" aria-hidden="true" />Strategy equity</span>
         )}
       </div>
 
@@ -123,7 +119,7 @@ export default function BacktestLineChart({ variant, points }) {
           viewBox={`0 0 ${chartWidth} ${chartHeight}`}
           preserveAspectRatio="none"
           role="img"
-          aria-label={isDrawdown ? 'Simulated strategy drawdown chart' : 'Simulated portfolio and benchmark equity curve chart'}
+          aria-label={isDrawdown ? 'Strategy drawdown chart' : 'Strategy equity curve chart'}
         >
           <defs>
             <linearGradient id={`backtest-${variant}-area`} x1="0" y1="0" x2="0" y2="1">
@@ -176,10 +172,7 @@ export default function BacktestLineChart({ variant, points }) {
           {isDrawdown ? (
             <path className="backtest-drawdown-line" d={geometry.drawdownPath} />
           ) : (
-            <>
-              <path className="backtest-benchmark-line" d={geometry.benchmarkPath} />
-              <path className="backtest-portfolio-line" d={geometry.portfolioPath} />
-            </>
+            <path className="backtest-portfolio-line" d={geometry.portfolioPath} />
           )}
 
           {hoveredPoint && activePoint && (
@@ -199,20 +192,12 @@ export default function BacktestLineChart({ variant, points }) {
                   r="4"
                 />
               ) : (
-                <>
-                  <circle
-                    className="backtest-chart-hover-point is-benchmark"
-                    cx={geometry.xScale(hoveredPoint.index)}
-                    cy={geometry.yScale(activePoint.benchmarkValue)}
-                    r="3.5"
-                  />
-                  <circle
-                    className="backtest-chart-hover-point is-portfolio"
-                    cx={geometry.xScale(hoveredPoint.index)}
-                    cy={geometry.yScale(activePoint.portfolioValue)}
-                    r="4"
-                  />
-                </>
+                <circle
+                  className="backtest-chart-hover-point is-portfolio"
+                  cx={geometry.xScale(hoveredPoint.index)}
+                  cy={geometry.yScale(activePoint.portfolioValue)}
+                  r="4"
+                />
               )}
             </>
           )}
@@ -228,10 +213,7 @@ export default function BacktestLineChart({ variant, points }) {
             {isDrawdown ? (
               <span>Drawdown <b>{activePoint.drawdown.toFixed(2)}%</b></span>
             ) : (
-              <>
-                <span>Portfolio value <b>{formatCurrency(activePoint.portfolioValue)}</b></span>
-                <span>Buy-and-hold <b>{formatCurrency(activePoint.benchmarkValue)}</b></span>
-              </>
+              <span>Strategy equity <b>{formatCurrency(activePoint.portfolioValue)}</b></span>
             )}
           </div>
         )}

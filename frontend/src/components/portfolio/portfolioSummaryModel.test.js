@@ -15,14 +15,19 @@ function apiSummary(overrides = {}) {
     portfolio_name: 'My Portfolio',
     portfolio_created_at: '2026-07-25T08:00:00Z',
     base_currency: 'USD',
-    price_source: 'DEMO_STATIC',
+    price_source: 'TWELVE_DATA',
     holdings_count: 1,
     total_asset_value: '189.84',
     holdings_market_value: '189.84',
     remaining_liquidity: '0.00',
     total_cost: '300.00',
+    realized_profit_loss: '25.00',
     unrealized_profit_loss: '-110.16',
+    total_profit_loss: '-85.16',
+    net_invested_capital: '1000.00',
+    unrealized_return_percentage: '-36.72',
     unrealized_return_percent: '-36.72',
+    total_return_percentage: '-8.52',
     allocations: [],
     ...overrides,
   }
@@ -61,7 +66,7 @@ test('does not fallback missing remaining_liquidity to hardcoded or legacy value
   assert.equal(cardValue(cards, 'Remaining Liquidity'), '$0.00')
 })
 
-test('keeps the six summary cards in the desktop 3x2 order', () => {
+test('keeps the nine summary cards in a clear 3x3 desktop order', () => {
   const portfolio = normalizePortfolioSummary(apiSummary())
   const cards = buildPortfolioSummaryCards(portfolio.summary)
 
@@ -74,9 +79,17 @@ test('keeps the six summary cards in the desktop 3x2 order', () => {
   assert.deepEqual(cards.slice(3).map((card) => card.label), [
     'Total Cost',
     'Unrealized Profit / Loss',
-    'Return Percentage',
+    'Realized Profit / Loss',
+    'Total Profit / Loss',
+    'Unrealized Return',
+    'Total Return',
   ])
-  assert.equal(cards.length, 6)
+  assert.deepEqual(cards.slice(6).map((card) => card.label), [
+    'Total Profit / Loss',
+    'Unrealized Return',
+    'Total Return',
+  ])
+  assert.equal(cards.length, 9)
   assert.equal(SUMMARY_GRID_COLUMNS.desktop, 3)
 })
 
@@ -95,8 +108,11 @@ test('summary card values update when the API summary changes', () => {
     holdings_market_value: '189.84',
     remaining_liquidity: '0.00',
     total_cost: '300.00',
+    realized_profit_loss: '25.00',
     unrealized_profit_loss: '-110.16',
-    unrealized_return_percent: '-36.72',
+    total_profit_loss: '-85.16',
+    unrealized_return_percentage: '-36.72',
+    total_return_percentage: '-8.52',
   }))
   const second = normalizePortfolioSummary(apiSummary({
     holdings_count: 2,
@@ -104,8 +120,11 @@ test('summary card values update when the API summary changes', () => {
     holdings_market_value: '1500.50',
     remaining_liquidity: '10000.00',
     total_cost: '1400.25',
+    realized_profit_loss: '40.00',
     unrealized_profit_loss: '100.25',
-    unrealized_return_percent: '7.16',
+    total_profit_loss: '140.25',
+    unrealized_return_percentage: '7.16',
+    total_return_percentage: '1.40',
   }))
 
   const firstCards = buildPortfolioSummaryCards(first.summary)
@@ -121,6 +140,12 @@ test('summary card values update when the API summary changes', () => {
   assert.equal(cardValue(secondCards, 'Total Cost'), '$1,400.25')
   assert.equal(cardValue(firstCards, 'Unrealized Profit / Loss'), '-$110.16')
   assert.equal(cardValue(secondCards, 'Unrealized Profit / Loss'), '+$100.25')
-  assert.equal(cardValue(firstCards, 'Return Percentage'), '-36.72%')
-  assert.equal(cardValue(secondCards, 'Return Percentage'), '7.16%')
+  assert.equal(cardValue(firstCards, 'Realized Profit / Loss'), '+$25.00')
+  assert.equal(cardValue(secondCards, 'Realized Profit / Loss'), '+$40.00')
+  assert.equal(cardValue(firstCards, 'Total Profit / Loss'), '-$85.16')
+  assert.equal(cardValue(secondCards, 'Total Profit / Loss'), '+$140.25')
+  assert.equal(cardValue(firstCards, 'Unrealized Return'), '-36.72%')
+  assert.equal(cardValue(secondCards, 'Unrealized Return'), '7.16%')
+  assert.equal(cardValue(firstCards, 'Total Return'), '-8.52%')
+  assert.equal(cardValue(secondCards, 'Total Return'), '1.40%')
 })

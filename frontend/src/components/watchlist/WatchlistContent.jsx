@@ -3,107 +3,61 @@ import Icon from '../Icon'
 import Sparkline from '../dashboard/Sparkline'
 import { securityApi } from '../../services/securityApi'
 import { watchlistApi } from '../../services/watchlistApi'
+import {
+  formatWatchlistCurrency,
+  formatWatchlistSignedCurrency,
+  formatWatchlistSignedPercent,
+  getWatchlistErrorMessage,
+  getWatchlistStatusTone,
+  buildWatchlistStock,
+  loadUserWatchlistData,
+  notifyWatchlistChanged,
+} from '../../services/watchlistDataService'
 
-const unavailableTrend = [0, 0]
+function getSearchSecurityKey(security) {
+  const symbol = String(security?.symbol ?? '').trim().toUpperCase()
+  if (!symbol) return ''
 
-function formatCurrency(value) {
-  if (!Number.isFinite(value)) return 'N/A'
+  const micCode = String(security?.mic_code ?? security?.micCode ?? '').trim().toUpperCase()
+  if (micCode) return `${symbol}:${micCode}`
 
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value)
+  const exchange = String(security?.exchange ?? '').trim().toLowerCase()
+  return exchange ? `${symbol}:${exchange}` : symbol
 }
 
-function formatSignedCurrency(value) {
-  if (!Number.isFinite(value)) return 'N/A'
-
-  const sign = value >= 0 ? '+' : '-'
-  return `${sign}${formatCurrency(Math.abs(value))}`
-}
-
-function formatSignedPercent(value) {
-  if (!Number.isFinite(value)) return 'N/A'
-
-  const sign = value >= 0 ? '+' : '-'
-  return `${sign}${Math.abs(value).toFixed(2)}%`
-}
-
-function getStatusTone(status) {
-  if (status === 'Bullish' || status === 'Uptrend') return 'is-positive'
-  if (status === 'Bearish' || status === 'Downtrend') return 'is-negative'
-  if (status === 'Near Overbought' || status === 'Near Oversold') return 'is-warning'
-  return 'is-neutral'
-}
-
-function parseSignedValue(value) {
-  const parsed = Number(String(value ?? '').replace(/[^0-9.-]/g, ''))
-  return Number.isFinite(parsed) ? parsed : null
-}
-
-function normalizeSecurity(security) {
-  if (!security) return null
-
+function normalizeSearchResult(result, searchQuery) {
+  if (!result) return null
   return {
-    id: security.id,
-    symbol: security.symbol,
-    company: security.name,
-    assetType: security.asset_type,
-    exchange: security.exchange,
-    currency: security.currency,
-    isActive: security.is_active !== false,
+    id: result.id ?? null,
+    symbol: String(result.symbol ?? '').trim().toUpperCase(),
+    name: String(result.name ?? '').trim(),
+    exchange: String(result.exchange ?? '').trim(),
+    mic_code: String(result.mic_code ?? '').trim().toUpperCase(),
+    instrument_type: String(result.instrument_type ?? '').trim(),
+    country: String(result.country ?? '').trim(),
+    currency: String(result.currency ?? 'USD').trim().toUpperCase(),
+    is_local: result.is_local === true,
+    is_preferred: result.is_preferred === true,
+    search_query: searchQuery,
   }
 }
 
-function buildMarketLookup(stocks) {
-  return new Map((stocks ?? []).map((stock) => [stock.symbol, stock]))
+function upsertWatchlistItem(items, nextItem) {
+  if (!nextItem?.id) return items
+  const existingIndex = items.findIndex((item) => item.id === nextItem.id)
+  if (existingIndex === -1) return [nextItem, ...items]
+
+  return items.map((item, index) => (index === existingIndex ? nextItem : item))
 }
 
-function buildWatchlistStock(security, marketLookup, itemId = null) {
-  const normalizedSecurity = normalizeSecurity(security)
-  if (!normalizedSecurity) return null
+function upsertWatchlistStock(stocks, nextItem) {
+  const nextStock = buildWatchlistStock(nextItem?.security, nextItem?.id)
+  if (!nextStock) return stocks
 
-  const marketStock = marketLookup.get(normalizedSecurity.symbol)
-  const dailyChange = parseSignedValue(marketStock?.change)
-  const changePercent = parseSignedValue(marketStock?.percent)
-  const direction = marketStock?.direction ?? 'neutral'
+  const existingIndex = stocks.findIndex((stock) => stock.itemId === nextStock.itemId)
+  if (existingIndex === -1) return [nextStock, ...stocks]
 
-  return {
-    ...normalizedSecurity,
-    itemId,
-    price: Number.isFinite(marketStock?.price) ? marketStock.price : null,
-    dailyChange,
-    changePercent,
-    direction,
-    trend: marketStock?.history?.['1M']?.['1D']?.closes?.slice(-18) ?? unavailableTrend,
-    rsiStatus: marketStock?.indicators?.rsi?.signal ?? 'Neutral',
-    macdStatus: marketStock?.indicators?.macd?.signal ?? 'Neutral',
-    overallTrend: direction === 'up' ? 'Uptrend' : direction === 'down' ? 'Downtrend' : 'Sideways',
-  }
-}
-
-function getWatchlistItemSecurity(item, securitiesById) {
-  const nestedSecurity = item?.security
-  if (!nestedSecurity) return null
-  return securitiesById.get(nestedSecurity.id) ?? nestedSecurity
-}
-
-function getErrorMessage(error) {
-  const data = error?.data
-  if (data && typeof data === 'object' && !Array.isArray(data)) {
-    if (data.security_id) {
-      const message = Array.isArray(data.security_id) ? data.security_id[0] : data.security_id
-      return String(message)
-    }
-    if (data.watchlist) {
-      const message = Array.isArray(data.watchlist) ? data.watchlist[0] : data.watchlist
-      return String(message)
-    }
-  }
-
-  return error?.message || 'Request failed. Please try again.'
+  return stocks.map((stock, index) => (index === existingIndex ? nextStock : stock))
 }
 
 function WatchlistStateCard({ actionLabel, children, icon = 'watchlist', onAction, tone = '' }) {
@@ -118,106 +72,170 @@ function WatchlistStateCard({ actionLabel, children, icon = 'watchlist', onActio
   )
 }
 
-export default function WatchlistContent({ stocks = [], onViewAnalysis }) {
+export default function WatchlistContent({ onViewAnalysis }) {
   const [watchlist, setWatchlist] = useState(null)
   const [watchlistItems, setWatchlistItems] = useState([])
-  const [securities, setSecurities] = useState([])
-  const [isLoading, setIsLoading] = useState(true)
+  const [initialLoading, setInitialLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   const [query, setQuery] = useState('')
+  const [searchResults, setSearchResults] = useState([])
+  const [selectedSearchResult, setSelectedSearchResult] = useState(null)
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [searchError, setSearchError] = useState('')
+  const [hasSearched, setHasSearched] = useState(false)
   const [feedback, setFeedback] = useState(null)
-  const [isAdding, setIsAdding] = useState(false)
-  const [removingItemId, setRemovingItemId] = useState(null)
+  const [addingSecurity, setAddingSecurity] = useState(false)
+  const [summaryRefreshing, setSummaryRefreshing] = useState(false)
+  const [quoteError, setQuoteError] = useState('')
+  const [selectedStocks, setSelectedStocks] = useState([])
+  const [deletingSecurityId, setDeletingSecurityId] = useState(null)
   const searchInputRef = useRef(null)
+  const searchRequestIdRef = useRef(0)
+  const watchlistLoadRequestIdRef = useRef(0)
 
-  const loadWatchlistData = useCallback(async () => {
-    setIsLoading(true)
-    setLoadError('')
-    setFeedback(null)
-    setWatchlist(null)
-    setWatchlistItems([])
-    setSecurities([])
-
-    try {
-      const [watchlistsResponse, securitiesResponse] = await Promise.all([
-        watchlistApi.list(),
-        securityApi.list(),
-      ])
-      const watchlists = Array.isArray(watchlistsResponse) ? watchlistsResponse : []
-      const currentWatchlist = watchlists[0] ?? null
-      setWatchlist(currentWatchlist)
-      setSecurities(Array.isArray(securitiesResponse) ? securitiesResponse : [])
-
-      if (currentWatchlist) {
-        const itemsResponse = await watchlistApi.items(currentWatchlist.id)
-        setWatchlistItems(Array.isArray(itemsResponse) ? itemsResponse : [])
-      }
-    } catch (error) {
-      setLoadError(error.message || 'Request failed. Please try again.')
-    } finally {
-      setIsLoading(false)
-    }
+  const restoreScrollPosition = useCallback((scrollY) => {
+    if (typeof window === 'undefined' || scrollY === null) return
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: scrollY, left: window.scrollX, behavior: 'auto' })
+    })
   }, [])
 
-  useEffect(() => {
-    loadWatchlistData()
-  }, [loadWatchlistData])
+  const applyWatchlistData = useCallback((data) => {
+    setWatchlist(data.watchlist)
+    setWatchlistItems(data.watchlistItems)
+    setSelectedStocks(data.selectedStocks)
+    setQuoteError(data.quoteError)
+  }, [])
 
-  const marketLookup = useMemo(() => buildMarketLookup(stocks), [stocks])
-  const securitiesById = useMemo(
-    () => new Map(securities.map((security) => [security.id, security])),
-    [securities],
-  )
-  const securityOptions = useMemo(
-    () => securities
-      .map(normalizeSecurity)
-      .filter((security) => security?.isActive),
-    [securities],
-  )
+  const refreshWatchlistData = useCallback(async ({ force = false, initial = false, preserveScrollY = null } = {}) => {
+    const requestId = watchlistLoadRequestIdRef.current + 1
+    watchlistLoadRequestIdRef.current = requestId
+
+    if (initial) {
+      setInitialLoading(true)
+      setLoadError('')
+      setFeedback(null)
+      setWatchlist(null)
+      setWatchlistItems([])
+      setQuoteError('')
+      setSelectedStocks([])
+    } else {
+      setSummaryRefreshing(true)
+    }
+
+    try {
+      const data = await loadUserWatchlistData({ force })
+      if (watchlistLoadRequestIdRef.current !== requestId) return
+      applyWatchlistData(data)
+      if (preserveScrollY !== null) restoreScrollPosition(preserveScrollY)
+    } catch (error) {
+      if (watchlistLoadRequestIdRef.current !== requestId) return
+      if (initial) {
+        setLoadError(error.message || 'Request failed. Please try again.')
+      } else {
+        setQuoteError(getWatchlistErrorMessage(error))
+      }
+    } finally {
+      if (watchlistLoadRequestIdRef.current !== requestId) return
+      if (initial) {
+        setInitialLoading(false)
+      } else {
+        setSummaryRefreshing(false)
+      }
+    }
+  }, [applyWatchlistData, restoreScrollPosition])
+
+  useEffect(() => {
+    refreshWatchlistData({ initial: true })
+  }, [refreshWatchlistData])
+
   const trackedSecurityIds = useMemo(
     () => new Set(watchlistItems.map((item) => item.security?.id).filter(Boolean)),
     [watchlistItems],
   )
-  const selectedStocks = useMemo(
-    () => watchlistItems
-      .map((item) => buildWatchlistStock(
-        getWatchlistItemSecurity(item, securitiesById),
-        marketLookup,
-        item.id,
-      ))
-      .filter(Boolean),
-    [marketLookup, securitiesById, watchlistItems],
+  const trackedSecurityKeys = useMemo(
+    () => new Set(
+      watchlistItems
+        .map((item) => getSearchSecurityKey(item.security))
+        .filter(Boolean),
+    ),
+    [watchlistItems],
   )
-
-  const normalizedQuery = query.trim().toLowerCase()
-  const searchResults = useMemo(() => {
-    if (!normalizedQuery) return []
-
-    return securityOptions.filter((security) =>
-      security.symbol.toLowerCase().includes(normalizedQuery)
-      || security.company.toLowerCase().includes(normalizedQuery),
-    )
-  }, [normalizedQuery, securityOptions])
-
-  const resolvedSecurity = useMemo(() => {
-    if (!normalizedQuery) return null
-
-    const exactMatch = searchResults.find(
-      (security) => security.symbol.toLowerCase() === normalizedQuery
-        || security.company.toLowerCase() === normalizedQuery,
-    )
-
-    return exactMatch ?? (searchResults.length === 1 ? searchResults[0] : null)
-  }, [normalizedQuery, searchResults])
-
-  const isDuplicate = resolvedSecurity ? trackedSecurityIds.has(resolvedSecurity.id) : false
+  const normalizedQuery = query.trim()
+  const canSearch = normalizedQuery.length >= 2
+  const selectedSearchKey = getSearchSecurityKey(selectedSearchResult)
+  const isDuplicate = Boolean(
+    selectedSearchResult
+    && (
+      (selectedSearchResult.id && trackedSecurityIds.has(selectedSearchResult.id))
+      || (selectedSearchKey && trackedSecurityKeys.has(selectedSearchKey))
+    ),
+  )
   const totalStocks = selectedStocks.length
   const gainers = selectedStocks.filter((stock) => stock.dailyChange > 0).length
   const decliners = selectedStocks.filter((stock) => stock.dailyChange < 0).length
 
+  useEffect(() => {
+    if (!canSearch) {
+      setSearchResults([])
+      setSearchLoading(false)
+      setSearchError('')
+      setHasSearched(false)
+      return undefined
+    }
+
+    if (selectedSearchResult && normalizedQuery.toUpperCase() === selectedSearchResult.symbol) {
+      setSearchResults([selectedSearchResult])
+      setSearchLoading(false)
+      setSearchError('')
+      setHasSearched(true)
+      return undefined
+    }
+
+    const requestId = searchRequestIdRef.current + 1
+    searchRequestIdRef.current = requestId
+    setSearchLoading(true)
+    setSearchError('')
+    setHasSearched(false)
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const payload = await securityApi.search(normalizedQuery)
+        if (searchRequestIdRef.current !== requestId) return
+
+        const items = Array.isArray(payload?.items) ? payload.items : []
+        setSearchResults(items.map((item) => normalizeSearchResult(item, normalizedQuery)).filter(Boolean))
+        setSearchError(payload?.metadata?.remote_error || '')
+        setHasSearched(true)
+      } catch (error) {
+        if (searchRequestIdRef.current !== requestId) return
+        setSearchResults([])
+        setSearchError(getWatchlistErrorMessage(error))
+        setHasSearched(true)
+      } finally {
+        if (searchRequestIdRef.current === requestId) setSearchLoading(false)
+      }
+    }, 450)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [canSearch, normalizedQuery, selectedSearchResult])
+
   const updateQuery = (value) => {
     setQuery(value)
     setFeedback(null)
+    setSearchError('')
+    if (selectedSearchResult && value.trim().toUpperCase() !== selectedSearchResult.symbol) {
+      setSelectedSearchResult(null)
+    }
+  }
+
+  const selectSearchResult = (result) => {
+    setSelectedSearchResult(result)
+    setQuery(result.symbol)
+    setFeedback(null)
+    setSearchError('')
   }
 
   const handleAdd = async (event) => {
@@ -231,48 +249,66 @@ export default function WatchlistContent({ stocks = [], onViewAnalysis }) {
       return
     }
 
-    if (!resolvedSecurity) {
+    if (!selectedSearchResult) {
       setFeedback({
         tone: 'error',
-        message: searchResults.length > 1
+        message: searchResults.length
           ? 'Select one security from the matching results.'
-          : 'No matching security was found.',
+          : 'Search for a symbol or company and select a result.',
       })
       return
     }
 
-    if (trackedSecurityIds.has(resolvedSecurity.id)) {
+    if (isDuplicate) {
       setFeedback({
         tone: 'error',
-        message: `${resolvedSecurity.symbol} is already in your watchlist.`,
+        message: `${selectedSearchResult.symbol} is already in your watchlist.`,
       })
       return
     }
 
-    setIsAdding(true)
+    const scrollY = typeof window === 'undefined' ? null : window.scrollY
+    setAddingSecurity(true)
     try {
-      const createdItem = await watchlistApi.createItem({
-        watchlist: watchlist.id,
-        security_id: resolvedSecurity.id,
+      const response = await watchlistApi.addSymbol({
+        id: selectedSearchResult.id,
+        symbol: selectedSearchResult.symbol,
+        name: selectedSearchResult.name,
+        exchange: selectedSearchResult.exchange,
+        mic_code: selectedSearchResult.mic_code,
+        instrument_type: selectedSearchResult.instrument_type,
+        country: selectedSearchResult.country,
+        currency: selectedSearchResult.currency,
+        search_query: selectedSearchResult.search_query || query.trim(),
       })
-      setWatchlistItems((current) => (
-        current.some((item) => item.id === createdItem.id)
-          ? current
-          : [createdItem, ...current]
-      ))
+      const addedSymbol = response?.security?.symbol || selectedSearchResult.symbol
+      const addedItem = response?.watchlist_item
+      if (addedItem?.id) {
+        setWatchlistItems((current) => upsertWatchlistItem(current, addedItem))
+        setSelectedStocks((current) => upsertWatchlistStock(current, addedItem))
+      }
+      notifyWatchlistChanged()
       setQuery('')
+      setSearchResults([])
+      setSelectedSearchResult(null)
+      setHasSearched(false)
+      setSearchError('')
       setFeedback({
         tone: 'success',
-        message: `${resolvedSecurity.symbol} was added to your watchlist.`,
+        message: response?.status === 'already_tracked'
+          ? `${addedSymbol} is already in your watchlist.`
+          : `${addedSymbol} was added to your watchlist.`,
       })
       searchInputRef.current?.focus()
+      restoreScrollPosition(scrollY)
+      refreshWatchlistData({ force: true, preserveScrollY: scrollY })
     } catch (error) {
       setFeedback({
         tone: 'error',
-        message: getErrorMessage(error),
+        message: getWatchlistErrorMessage(error),
       })
     } finally {
-      setIsAdding(false)
+      setAddingSecurity(false)
     }
   }
 
@@ -280,11 +316,16 @@ export default function WatchlistContent({ stocks = [], onViewAnalysis }) {
     const shouldRemove = window.confirm(`Remove ${stock.symbol} - ${stock.company} from your watchlist?`)
     if (!shouldRemove) return
 
-    setRemovingItemId(stock.itemId)
+    const scrollY = typeof window === 'undefined' ? null : window.scrollY
+    setDeletingSecurityId(stock.itemId)
     setFeedback(null)
     try {
       await watchlistApi.removeItem(stock.itemId)
       setWatchlistItems((current) => current.filter((item) => item.id !== stock.itemId))
+      setSelectedStocks((current) => current.filter((item) => item.itemId !== stock.itemId))
+      notifyWatchlistChanged()
+      restoreScrollPosition(scrollY)
+      refreshWatchlistData({ force: true, preserveScrollY: scrollY })
       setFeedback({
         tone: 'success',
         message: `${stock.symbol} was removed from your watchlist.`,
@@ -292,10 +333,10 @@ export default function WatchlistContent({ stocks = [], onViewAnalysis }) {
     } catch (error) {
       setFeedback({
         tone: 'error',
-        message: getErrorMessage(error),
+        message: getWatchlistErrorMessage(error),
       })
     } finally {
-      setRemovingItemId(null)
+      setDeletingSecurityId(null)
     }
   }
 
@@ -304,11 +345,11 @@ export default function WatchlistContent({ stocks = [], onViewAnalysis }) {
   }
 
   const notice = isDuplicate
-    ? { tone: 'error', message: `${resolvedSecurity.symbol} is already in your watchlist.` }
+    ? { tone: 'error', message: `${selectedSearchResult.symbol} is already in your watchlist.` }
     : feedback
-  const addButtonLabel = isAdding ? 'Adding...' : 'Add to Watchlist'
+  const addButtonLabel = addingSecurity ? 'Adding...' : 'Add to Watchlist'
 
-  if (isLoading) {
+  if (initialLoading) {
     return (
       <main className="main-content watchlist-page-main">
         <section className="watchlist-page-heading" aria-labelledby="watchlist-page-title">
@@ -336,7 +377,7 @@ export default function WatchlistContent({ stocks = [], onViewAnalysis }) {
             <span>Unable to load your Watchlist record.</span>
           </div>
         </section>
-        <WatchlistStateCard actionLabel="Retry" onAction={loadWatchlistData} tone="is-error">
+        <WatchlistStateCard actionLabel="Retry" onAction={() => refreshWatchlistData({ initial: true })} tone="is-error">
           <h3>Watchlist request failed.</h3>
           <p>{loadError}</p>
         </WatchlistStateCard>
@@ -350,11 +391,19 @@ export default function WatchlistContent({ stocks = [], onViewAnalysis }) {
         <div>
           <p>Personal market tracker</p>
           <h2 id="watchlist-page-title">{watchlist?.name ?? 'Watchlist'}</h2>
-          <span>Track selected securities and review their latest market and technical status.</span>
+          <span>Track selected securities saved to your Django Watchlist.</span>
         </div>
         <div className="demo-data-status" aria-label="Watchlist data source">
           <strong>Watchlist API</strong>
-          <span>Django records with demo pricing</span>
+          <span>
+            {quoteError
+              ? quoteError
+              : summaryRefreshing
+                ? 'Refreshing latest Watchlist data...'
+                : selectedStocks.some((stock) => stock.price !== null)
+                ? 'Quotes from market-data API with cache fallback'
+                : 'Security records from PostgreSQL'}
+          </span>
         </div>
       </section>
 
@@ -378,39 +427,57 @@ export default function WatchlistContent({ stocks = [], onViewAnalysis }) {
                 placeholder="Search AAPL or Apple Inc."
                 autoComplete="off"
                 aria-controls="watchlist-search-results"
-                aria-expanded={Boolean(normalizedQuery && searchResults.length)}
+                aria-expanded={Boolean(canSearch && searchResults.length)}
               />
             </div>
           </label>
           <button
             className="watchlist-add-button"
             type="submit"
-            disabled={!normalizedQuery || isDuplicate || isAdding || !watchlist}
+            disabled={!selectedSearchResult || isDuplicate || addingSecurity || !watchlist}
           >
             {addButtonLabel}
           </button>
         </form>
 
-        {normalizedQuery && (
+        {canSearch && (
           <div className="watchlist-search-results" id="watchlist-search-results">
-            {searchResults.length ? (
+            {searchLoading ? (
+              <p>Searching securities...</p>
+            ) : searchError && !searchResults.length ? (
+              <p>{searchError}</p>
+            ) : searchResults.length ? (
               <ul aria-label="Matching securities">
-                {searchResults.map((security) => {
-                  const isTracked = trackedSecurityIds.has(security.id)
+                {searchResults.map((security, index) => {
+                  const resultKey = getSearchSecurityKey(security)
+                  const isSelected = selectedSearchKey && resultKey === selectedSearchKey
+                  const isTracked = Boolean(
+                    (security.id && trackedSecurityIds.has(security.id))
+                    || (resultKey && trackedSecurityKeys.has(resultKey)),
+                  )
                   return (
-                    <li key={security.id}>
-                      <button type="button" onClick={() => updateQuery(security.symbol)}>
+                    <li key={`${resultKey || security.symbol}-${index}`}>
+                      <button
+                        type="button"
+                        className={isSelected ? 'is-selected' : ''}
+                        onClick={() => selectSearchResult(security)}
+                        aria-pressed={isSelected}
+                      >
                         <strong>{security.symbol}</strong>
-                        <span>{security.company}</span>
-                        {isTracked && <small>Already tracked</small>}
+                        <span>{security.name}</span>
+                        <small>{[security.exchange, security.instrument_type].filter(Boolean).join(' - ')}</small>
+                        <small>{security.is_local ? 'Local' : 'Remote'}{isTracked ? ' - Already tracked' : ''}</small>
                       </button>
                     </li>
                   )
                 })}
               </ul>
-            ) : (
+            ) : hasSearched ? (
               <p>No securities match "{query.trim()}".</p>
+            ) : (
+              <p>Type at least 2 characters to search symbols and company names.</p>
             )}
+            {searchError && searchResults.length ? <p>{searchError}</p> : null}
           </div>
         )}
 
@@ -418,7 +485,7 @@ export default function WatchlistContent({ stocks = [], onViewAnalysis }) {
           className={`watchlist-feedback${notice ? ` is-${notice.tone}` : ''}`}
           aria-live="polite"
         >
-          {notice?.message ?? 'Available securities are loaded from the Django API.'}
+          {notice?.message ?? 'Search results include local securities and verified Twelve Data symbols.'}
         </p>
       </section>
 
@@ -452,7 +519,7 @@ export default function WatchlistContent({ stocks = [], onViewAnalysis }) {
         {selectedStocks.length ? (
           <div className="watchlist-page-table-wrap">
             <table className="watchlist-page-table">
-              <caption className="sr-only">Current watchlist market and technical status</caption>
+              <caption className="sr-only">Current saved Watchlist securities</caption>
               <thead>
                 <tr>
                   <th scope="col">Symbol</th>
@@ -469,50 +536,63 @@ export default function WatchlistContent({ stocks = [], onViewAnalysis }) {
               </thead>
               <tbody>
                 {selectedStocks.map((stock) => {
-                  const isRemoving = removingItemId === stock.itemId
+                  const isRemoving = deletingSecurityId === stock.itemId
                   return (
                     <tr key={stock.itemId}>
                       <td data-label="Symbol"><strong className="watchlist-page-symbol">{stock.symbol}</strong></td>
                       <td data-label="Company"><span className="watchlist-page-company">{stock.company}</span></td>
-                      <td data-label="Price"><strong className="watchlist-page-price">{formatCurrency(stock.price)}</strong></td>
+                      <td data-label="Price">
+                        <strong
+                          className="watchlist-page-price"
+                          title={stock.latestAsOf ? `Latest available: ${stock.latestAsOf}` : undefined}
+                        >
+                          {formatWatchlistCurrency(stock.price, stock.currency)}
+                        </strong>
+                      </td>
                       <td data-label="Daily Change">
                         <span className={`watchlist-page-move is-${stock.direction}`}>
-                          {formatSignedCurrency(stock.dailyChange)}
+                          {formatWatchlistSignedCurrency(stock.dailyChange, stock.currency)}
                         </span>
                       </td>
                       <td data-label="Change %">
                         <span className={`watchlist-page-move is-${stock.direction}`}>
-                          {formatSignedPercent(stock.changePercent)}
+                          {formatWatchlistSignedPercent(stock.changePercent)}
                         </span>
                       </td>
                       <td data-label="Mini Trend">
                         <span className={`watchlist-mini-trend is-${stock.direction}`}>
-                          <span aria-hidden="true">
-                            {stock.direction === 'up' ? '+' : stock.direction === 'down' ? '-' : '0'}
-                          </span>
-                          <Sparkline
-                            values={stock.trend}
-                            color={stock.direction === 'up' ? '#2bbf8a' : stock.direction === 'down' ? '#ef6a78' : '#9aa3b2'}
-                            width={82}
-                            height={28}
-                          />
-                          <span className="sr-only">
-                            {stock.direction === 'up' ? 'Upward' : stock.direction === 'down' ? 'Downward' : 'Flat'} mini trend
-                          </span>
+                          {stock.trend.length >= 2 ? (
+                            <>
+                              <span aria-hidden="true">
+                                {stock.direction === 'up' ? '+' : stock.direction === 'down' ? '-' : '0'}
+                              </span>
+                              <Sparkline
+                                values={stock.trend}
+                                color={stock.direction === 'up' ? '#2bbf8a' : stock.direction === 'down' ? '#ef6a78' : '#9aa3b2'}
+                                width={82}
+                                height={28}
+                              />
+                              <span className="sr-only">
+                                {stock.direction === 'up' ? 'Upward' : stock.direction === 'down' ? 'Downward' : 'Flat'} mini trend
+                              </span>
+                            </>
+                          ) : (
+                            <span className="watchlist-mini-trend-unavailable">—</span>
+                          )}
                         </span>
                       </td>
                       <td data-label="RSI Status">
-                        <span className={`watchlist-status ${getStatusTone(stock.rsiStatus)}`}>
+                        <span className={`watchlist-status ${getWatchlistStatusTone(stock.rsiStatus)}`}>
                           {stock.rsiStatus}
                         </span>
                       </td>
                       <td data-label="MACD Status">
-                        <span className={`watchlist-status ${getStatusTone(stock.macdStatus)}`}>
+                        <span className={`watchlist-status ${getWatchlistStatusTone(stock.macdStatus)}`}>
                           {stock.macdStatus}
                         </span>
                       </td>
                       <td data-label="Overall Trend">
-                        <span className={`watchlist-status ${getStatusTone(stock.overallTrend)}`}>
+                        <span className={`watchlist-status ${getWatchlistStatusTone(stock.overallTrend)}`}>
                           {stock.overallTrend}
                         </span>
                       </td>

@@ -22,6 +22,12 @@ class Portfolio(models.Model):
         default=Decimal('0.00'),
         validators=[MinValueValidator(Decimal('0.00'))],
     )
+    initial_balance = models.DecimalField(
+        max_digits=18,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))],
+    )
     base_currency = models.CharField(max_length=3, default='USD')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -40,6 +46,36 @@ class Portfolio(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class PortfolioCashFlow(models.Model):
+    class FlowType(models.TextChoices):
+        INITIAL = 'INITIAL', 'Initial'
+        DEPOSIT = 'DEPOSIT', 'Deposit'
+        WITHDRAWAL = 'WITHDRAWAL', 'Withdrawal'
+        ADJUSTMENT = 'ADJUSTMENT', 'Adjustment'
+
+    portfolio = models.ForeignKey(
+        Portfolio,
+        on_delete=models.CASCADE,
+        related_name='cash_flows',
+    )
+    flow_type = models.CharField(max_length=16, choices=FlowType.choices)
+    amount = models.DecimalField(max_digits=20, decimal_places=4)
+    effective_date = models.DateTimeField()
+    note = models.TextField(blank=True)
+    is_estimated = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['effective_date', 'id']
+        indexes = [
+            models.Index(fields=['portfolio', 'effective_date'], name='cash_flow_port_date_idx'),
+            models.Index(fields=['portfolio', 'flow_type'], name='cash_flow_port_type_idx'),
+        ]
+
+    def __str__(self):
+        return f'{self.flow_type} {self.amount} for {self.portfolio.name}'
 
 
 class Holding(models.Model):
@@ -126,6 +162,11 @@ class TradeTransaction(models.Model):
         decimal_places=2,
         default=Decimal('0.00'),
         validators=[MinValueValidator(Decimal('0.00'))],
+    )
+    realized_profit_loss = models.DecimalField(
+        max_digits=20,
+        decimal_places=4,
+        default=Decimal('0.0000'),
     )
     transaction_date = models.DateTimeField()
     notes = models.TextField(blank=True)

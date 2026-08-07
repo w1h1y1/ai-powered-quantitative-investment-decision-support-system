@@ -1,4 +1,5 @@
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.urls import reverse
@@ -29,6 +30,9 @@ class SessionSwitchingIsolationTests(APITestCase):
             exchange='NYSEARCA',
             currency='USD',
         )
+        self.quote_patch = patch('portfolio.services.get_security_latest_quotes', return_value=())
+        self.quote_patch.start()
+        self.addCleanup(self.quote_patch.stop)
 
     def login_as(self, username):
         response = self.client.post(

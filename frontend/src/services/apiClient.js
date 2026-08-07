@@ -1,8 +1,10 @@
 const defaultBaseUrl = 'http://127.0.0.1:8000'
+const viteEnv = import.meta.env || {}
 
-export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || defaultBaseUrl).replace(/\/+$/, '')
+export const API_BASE_URL = (viteEnv.VITE_API_BASE_URL || defaultBaseUrl).replace(/\/+$/, '')
 
 const csrfCookieName = 'csrftoken'
+const networkErrorMessage = 'Unable to connect to the server. Please try again later.'
 let csrfRequestPromise = null
 
 export class ApiError extends Error {
@@ -64,7 +66,12 @@ async function ensureCsrfCookie() {
     })
   }
 
-  const response = await csrfRequestPromise
+  let response
+  try {
+    response = await csrfRequestPromise
+  } catch (error) {
+    throw new ApiError(networkErrorMessage, 0, null)
+  }
   if (!response.ok) {
     throw new ApiError('Unable to prepare CSRF protection. Please try again.', response.status, await parseResponse(response))
   }
@@ -96,7 +103,7 @@ export async function apiRequest(path, options = {}) {
         : options.body,
     })
   } catch (error) {
-    throw new ApiError('Request failed. Please try again.', 0, null)
+    throw new ApiError(networkErrorMessage, 0, null)
   }
 
   const data = await parseResponse(response)

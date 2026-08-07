@@ -199,12 +199,68 @@ function getCustomSourceRange(startDate, endDate) {
   return '1Y'
 }
 
+function parseFiniteNumber(value) {
+  if (value === null || value === undefined || String(value).trim() === '') return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function getCandleSortTime(candle) {
+  const timestamp = parseFiniteNumber(candle?.timestamp)
+  if (timestamp !== null) return timestamp
+
+  const parsed = Date.parse(candle?.date ?? candle?.datetime ?? '')
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function normalizeMarketHistory(history) {
+  const candles = Array.isArray(history?.candles) ? history.candles : []
+  const normalizedCandles = candles
+    .map((candle, originalIndex) => {
+      const sortTime = getCandleSortTime(candle)
+      const open = parseFiniteNumber(candle?.open)
+      const high = parseFiniteNumber(candle?.high)
+      const low = parseFiniteNumber(candle?.low)
+      const close = parseFiniteNumber(candle?.close)
+      const volume = parseFiniteNumber(candle?.volume)
+      if (
+        sortTime === null
+        || ![open, high, low, close].every(Number.isFinite)
+        || high < low
+      ) return null
+
+      return {
+        ...candle,
+        open,
+        high,
+        low,
+        close,
+        volume: volume ?? 0,
+        sortTime,
+        originalIndex,
+      }
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.sortTime - right.sortTime || left.originalIndex - right.originalIndex)
+    .map(({ sortTime, originalIndex, ...candle }) => candle)
+
+  return {
+    ...history,
+    candles: normalizedCandles,
+    opens: normalizedCandles.map((candle) => candle.open),
+    highs: normalizedCandles.map((candle) => candle.high),
+    lows: normalizedCandles.map((candle) => candle.low),
+    closes: normalizedCandles.map((candle) => candle.close),
+    volumes: normalizedCandles.map((candle) => candle.volume),
+  }
+}
+
 export function getMarketHistory(stock, { range, interval, customRange }) {
   const safeInterval = marketBarIntervals.includes(interval) ? interval : marketDefaultIntervals['1D']
 
   if (range !== 'Custom' || !customRange) {
     const safeRange = marketPresetRanges.includes(range) ? range : '1D'
-    return stock.history[safeRange][safeInterval]
+    return normalizeMarketHistory(stock.history[safeRange][safeInterval])
   }
 
   const sourceRange = getCustomSourceRange(customRange.startDate, customRange.endDate)
@@ -212,7 +268,7 @@ export function getMarketHistory(stock, { range, interval, customRange }) {
   const customId = `${customRange.startDate}-${customRange.endDate}-${safeInterval}`
   const timestamps = createCustomTimestamps(customRange.startDate, customRange.endDate, source.candles.length)
 
-  return {
+  return normalizeMarketHistory({
     ...source,
     labels: createCustomLabels(customRange.startDate, customRange.endDate),
     candles: source.candles.map((candle, index) => ({
@@ -220,7 +276,7 @@ export function getMarketHistory(stock, { range, interval, customRange }) {
       id: `Custom-${customId}-${index}`,
       timestamp: timestamps[index],
     })),
-  }
+  })
 }
 
 export const marketAnalysisStocks = [

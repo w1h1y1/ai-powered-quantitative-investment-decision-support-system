@@ -5,9 +5,9 @@ from .models import Security, SecurityDailyPrice
 
 @admin.register(Security)
 class SecurityAdmin(admin.ModelAdmin):
-    list_display = ['symbol', 'name', 'asset_type', 'exchange', 'currency', 'is_active']
-    list_filter = ['asset_type', 'exchange', 'currency', 'is_active']
-    search_fields = ['symbol', 'name', 'exchange']
+    list_display = ['symbol', 'name', 'asset_type', 'exchange', 'mic_code', 'country', 'currency', 'is_active']
+    list_filter = ['asset_type', 'exchange', 'country', 'currency', 'is_active']
+    search_fields = ['symbol', 'name', 'exchange', 'mic_code', 'country']
     ordering = ['symbol']
 
 

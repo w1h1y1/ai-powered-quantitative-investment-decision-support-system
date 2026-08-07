@@ -40,6 +40,32 @@ test('builds BUY transaction payload for the backend serializer', () => {
   })
 })
 
+test('builds remote BUY payload with verified security submission fields', () => {
+  const payload = buildTradeTransactionPayload(baseValues({
+    securityId: undefined,
+    securitySubmission: {
+      symbol: 'AMD',
+      name: 'Advanced Micro Devices Inc.',
+      exchange: 'NASDAQ',
+      mic_code: 'XNAS',
+      instrument_type: 'Common Stock',
+      country: 'United States',
+      currency: 'USD',
+      search_query: 'Advanced Micro Devices',
+    },
+  }))
+
+  assert.equal(payload.security_id, undefined)
+  assert.equal(payload.symbol, 'AMD')
+  assert.equal(payload.name, 'Advanced Micro Devices Inc.')
+  assert.equal(payload.exchange, 'NASDAQ')
+  assert.equal(payload.mic_code, 'XNAS')
+  assert.equal(payload.instrument_type, 'Common Stock')
+  assert.equal(payload.country, 'United States')
+  assert.equal(payload.currency, 'USD')
+  assert.equal(payload.search_query, 'Advanced Micro Devices')
+})
+
 test('submits BUY successfully and reloads summary and transactions', async () => {
   const createdPayloads = []
   let summaryReloads = 0
@@ -208,6 +234,23 @@ test('validates quantity and price before submitting', () => {
   assert.equal(validateTradeInput(baseValues({ quantity: '-1' })), 'Quantity must be greater than 0.')
   assert.equal(validateTradeInput(baseValues({ price: '' })), 'Price is required.')
   assert.equal(validateTradeInput(baseValues({ price: '0' })), 'Price must be greater than 0.')
+})
+
+test('allows BUY security submission without local security id but keeps SELL strict', () => {
+  assert.equal(validateTradeInput(baseValues({
+    securityId: undefined,
+    securitySubmission: {
+      symbol: 'AMD',
+      name: 'Advanced Micro Devices Inc.',
+    },
+  })), '')
+  assert.equal(validateTradeInput(baseValues({
+    transactionType: 'SELL',
+    securityId: undefined,
+    securitySubmission: {
+      symbol: 'AMD',
+    },
+  })), 'Please select a security.')
 })
 
 test('prevents SELL quantity above the current available quantity', () => {

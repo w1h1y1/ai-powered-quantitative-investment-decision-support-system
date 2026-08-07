@@ -213,6 +213,12 @@
   border-color: #dce0ff;
 }
 
+.watchlist-search-results button.is-selected {
+  color: var(--accent);
+  background: #eef1ff;
+  border-color: #b9c2ff;
+}
+
 .watchlist-search-results strong {
   color: #2c374b;
   font-size: 10px;
@@ -434,6 +440,15 @@
   flex: 0 0 82px;
   width: 82px;
   height: 28px;
+}
+
+.watchlist-mini-trend-unavailable {
+  display: inline-grid;
+  width: 82px;
+  height: 28px;
+  place-items: center;
+  color: #9aa3b2;
+  font-size: 12px;
 }
 
 .watchlist-status {
