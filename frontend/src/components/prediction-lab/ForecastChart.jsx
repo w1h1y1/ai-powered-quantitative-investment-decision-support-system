@@ -41,8 +41,9 @@ export default function ForecastChart({ forecast }) {
   const { historical, forecast: forecastPoints } = forecast.forecastSeries
 
   const geometry = useMemo(() => {
-    const forecastOffset = historical.length - 1
-    const combinedPointCount = historical.length + forecastPoints.length - 1
+    const hasForecast = forecastPoints.length > 0
+    const forecastOffset = Math.max(historical.length - 1, 0)
+    const combinedPointCount = hasForecast ? historical.length + forecastPoints.length - 1 : historical.length
     const values = [
       ...historical.map((point) => point.price),
       ...forecastPoints.flatMap((point) => [point.lowerBound, point.upperBound]),
@@ -64,7 +65,7 @@ export default function ForecastChart({ forecast }) {
       const originalIndex = forecastPoints.length - reverseIndex - 1
       return `L ${xScale(originalIndex + forecastOffset)} ${yScale(point.lowerBound)}`
     }).join(' ')
-    const rangePath = `${upperPath} ${lowerReversePath} Z`
+    const rangePath = hasForecast ? `${upperPath} ${lowerReversePath} Z` : ''
     const timeline = [
       ...historical,
       ...forecastPoints.slice(1),
@@ -73,6 +74,7 @@ export default function ForecastChart({ forecast }) {
     return {
       combinedPointCount,
       forecastOffset,
+      hasForecast,
       historicalPath,
       forecastPath,
       rangePath,
@@ -102,7 +104,7 @@ export default function ForecastChart({ forecast }) {
   }
 
   const activeTimelinePoint = hoveredPoint ? geometry.timeline[hoveredPoint.index] : null
-  const isForecastPoint = hoveredPoint?.index >= geometry.forecastOffset
+  const isForecastPoint = geometry.hasForecast && hoveredPoint?.index >= geometry.forecastOffset
   const activeForecastPoint = isForecastPoint
     ? forecastPoints[hoveredPoint.index - geometry.forecastOffset]
     : null
@@ -111,16 +113,16 @@ export default function ForecastChart({ forecast }) {
     <section className="prediction-card prediction-chart-card" aria-labelledby="prediction-chart-title">
       <div className="prediction-card-header">
         <div>
-          <p>Historical and simulated path</p>
-          <h2 id="prediction-chart-title">Forecast Chart</h2>
-          <span>Forecast values begin at the marked boundary and are not observed market prices.</span>
+          <p>{geometry.hasForecast ? 'Historical and simulated path' : 'Historical market prices'}</p>
+          <h2 id="prediction-chart-title">{geometry.hasForecast ? 'Forecast Chart' : 'Historical Price Chart'}</h2>
+          <span>{geometry.hasForecast ? 'Forecast values begin at the marked boundary and are not observed market prices.' : 'Real daily close prices returned by the Django Prediction API.'}</span>
         </div>
       </div>
 
       <div className="prediction-chart-legend" aria-label="Forecast chart legend">
         <span><i className="is-historical" aria-hidden="true" />Historical Price</span>
-        <span><i className="is-forecast" aria-hidden="true" />Forecast</span>
-        <span><i className="is-range" aria-hidden="true" />Forecast Range</span>
+        {geometry.hasForecast && <span><i className="is-forecast" aria-hidden="true" />Forecast</span>}
+        {geometry.hasForecast && <span><i className="is-range" aria-hidden="true" />Forecast Range</span>}
       </div>
 
       <div
@@ -133,7 +135,9 @@ export default function ForecastChart({ forecast }) {
           viewBox={`0 0 ${chartWidth} ${chartHeight}`}
           preserveAspectRatio="none"
           role="img"
-          aria-label={`${forecast.asset.symbol} historical price and rule-based forecast chart`}
+          aria-label={geometry.hasForecast
+            ? `${forecast.asset.symbol} historical price and forecast chart`
+            : `${forecast.asset.symbol} historical price chart`}
         >
           <defs>
             <linearGradient id="prediction-forecast-range" x1="0" y1="0" x2="0" y2="1">
@@ -166,24 +170,24 @@ export default function ForecastChart({ forecast }) {
             </text>
           ))}
 
-          <path className="prediction-range-area" d={geometry.rangePath} />
+          {geometry.hasForecast && <path className="prediction-range-area" d={geometry.rangePath} />}
           <path className="prediction-historical-line" d={geometry.historicalPath} />
-          <path className="prediction-forecast-line" d={geometry.forecastPath} />
+          {geometry.hasForecast && <path className="prediction-forecast-line" d={geometry.forecastPath} />}
 
-          <line
+          {geometry.hasForecast && <line
             className="prediction-start-line"
             x1={geometry.xScale(geometry.forecastOffset)}
             x2={geometry.xScale(geometry.forecastOffset)}
             y1={padding.top}
             y2={geometry.plotBottom}
-          />
-          <text
+          />}
+          {geometry.hasForecast && <text
             className="prediction-start-label"
             x={geometry.xScale(geometry.forecastOffset) + 7}
             y={padding.top + 12}
           >
             Forecast starts
-          </text>
+          </text>}
 
           {hoveredPoint && activeTimelinePoint && (
             <line
@@ -218,4 +222,3 @@ export default function ForecastChart({ forecast }) {
     </section>
   )
 }
-

@@ -74,6 +74,8 @@ export function normalizeSecurity(security) {
     assetType: normalizeText(security.asset_type),
     exchange: normalizeText(security.exchange),
     currency: normalizeText(security.currency).toUpperCase(),
+    micCode: normalizeText(security.mic_code ?? security.micCode).toUpperCase(),
+    country: normalizeText(security.country),
     isActive: security.is_active === true,
   }
 }
@@ -84,6 +86,16 @@ export function getActiveSecurities(response) {
   return response
     .map(normalizeSecurity)
     .filter((security) => security?.id && security.symbol && security.name && security.isActive)
+}
+
+export function upsertDashboardSecurity(securities, security) {
+  if (!security?.id || !security.symbol || !security.isActive) return securities
+
+  const nextSecurities = securities.filter(
+    (currentSecurity) => String(currentSecurity.id) !== String(security.id),
+  )
+  return [...nextSecurities, security]
+    .sort((left, right) => left.symbol.localeCompare(right.symbol))
 }
 
 export function filterSecurityOptions(securities, query) {

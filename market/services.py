@@ -2,13 +2,14 @@ from dataclasses import dataclass, field, replace
 from calendar import monthrange
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
+from hashlib import sha256
 import logging
 from threading import Lock
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.core.cache import cache
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Max, Min, Q
 from django.utils import timezone
 
@@ -249,6 +250,12 @@ class MarketDataInvalidSymbol(MarketDataError):
     pass
 
 
+class SecuritySelectionValidationError(Exception):
+    def __init__(self, detail):
+        self.detail = detail
+        super().__init__(str(detail))
+
+
 @dataclass(frozen=True)
 class MarketDataResult:
     security: Security
@@ -362,7 +369,21 @@ def get_security_symbol_search_cache_ttl_seconds():
 
 
 def get_symbol_search_cache_key(query):
-    return f'{MARKET_DATA_SYMBOL_SEARCH_CACHE_KEY_PREFIX}:{query.lower()}'
+    # Search terms may contain spaces or punctuation that are invalid in
+    # Memcached keys. A stable digest also keeps long company-name queries
+    # below backend key-length limits while preserving deterministic caching.
+    digest = sha256(query.strip().lower().encode('utf-8')).hexdigest()
+    return f'{MARKET_DATA_SYMBOL_SEARCH_CACHE_KEY_PREFIX}:{digest}'
+
+
+def invalidate_security_symbol_search_cache(*values):
+    cache_keys = {
+        get_symbol_search_cache_key(normalized_value)
+        for value in values
+        if len(normalized_value := normalize_security_search_text(value)) >= 2
+    }
+    if cache_keys:
+        cache.delete_many(cache_keys)
 
 
 def get_symbol_search_lock(cache_key):
@@ -534,6 +555,7 @@ def serialize_security_search_result(result):
         'country': result.country,
         'currency': result.currency,
         'is_local': result.is_local,
+        'source': 'local' if result.is_local else 'remote',
         'is_preferred': is_preferred_security_result(result),
     }
 
@@ -568,7 +590,11 @@ def build_security_search_payload(query, client=None):
                 normalize_remote_security_search_result(item)
                 for item in market_data_client.symbol_search(query)
             )
-            if result is not None
+            if (
+                result is not None
+                and get_asset_type_from_instrument_type(result.instrument_type)
+                in SUPPORTED_MARKET_DATA_ASSET_TYPES
+            )
         )
     except TwelveDataRateLimitError as exc:
         if not local_results:
@@ -614,12 +640,12 @@ def build_security_search_payload(query, client=None):
 
 def search_security_symbols(query, client=None, force_refresh=False):
     normalized_query = normalize_security_search_text(query)
-    if not normalized_query:
+    if len(normalized_query) < 2:
         return {
-            'query': '',
+            'query': normalized_query,
             'items': (),
             'metadata': {
-                'query': '',
+                'query': normalized_query,
                 'count': 0,
                 'local_count': 0,
                 'remote_error': '',
@@ -657,6 +683,184 @@ def search_security_symbols(query, client=None, force_refresh=False):
         if client is None and cache_ttl > 0:
             cache.set(cache_key, payload, cache_ttl)
         return payload
+
+
+def security_search_item_matches_submission(item, data):
+    submitted_symbol = normalize_security_symbol(data.get('symbol'))
+    if normalize_security_symbol(item.get('symbol')) != submitted_symbol:
+        return False
+
+    submitted_id = data.get('id')
+    if submitted_id and item.get('id') == submitted_id:
+        return True
+
+    submitted_mic_code = normalize_security_mic_code(data.get('mic_code'))
+    item_mic_code = normalize_security_mic_code(item.get('mic_code'))
+    if submitted_mic_code and item_mic_code:
+        return submitted_mic_code == item_mic_code
+
+    submitted_exchange = normalize_security_exchange(data.get('exchange'))
+    item_exchange = normalize_security_exchange(item.get('exchange'))
+    if submitted_exchange and item_exchange:
+        return submitted_exchange.lower() == item_exchange.lower()
+
+    return bool(item.get('is_local'))
+
+
+def get_local_security_from_selection(data):
+    security_id = data.get('id')
+    if not security_id:
+        return None
+
+    try:
+        security = Security.objects.get(pk=security_id, is_active=True)
+    except Security.DoesNotExist:
+        raise SecuritySelectionValidationError({
+            'security': 'Selected security is no longer available.',
+        })
+
+    submitted_symbol = normalize_security_symbol(data.get('symbol'))
+    if submitted_symbol and security.symbol != submitted_symbol:
+        raise SecuritySelectionValidationError({
+            'security': 'Selected security does not match the submitted symbol.',
+        })
+
+    submitted_mic_code = normalize_security_mic_code(data.get('mic_code'))
+    if submitted_mic_code and security.mic_code and security.mic_code != submitted_mic_code:
+        raise SecuritySelectionValidationError({
+            'security': 'Selected security does not match the submitted exchange.',
+        })
+
+    return security
+
+
+def get_security_selection_queries(data):
+    queries = []
+    for value in (data.get('search_query'), data.get('symbol'), data.get('name')):
+        query = normalize_security_search_text(value)
+        if len(query) >= 2 and query.lower() not in {item.lower() for item in queries}:
+            queries.append(query)
+    return queries
+
+
+def get_verified_security_search_item(data, search_func=None):
+    local_security = get_local_security_from_selection(data)
+    if local_security is not None:
+        return serialize_security_search_result(build_local_security_search_result(local_security))
+
+    queries = get_security_selection_queries(data)
+    if not queries:
+        raise SecuritySelectionValidationError({
+            'symbol': 'Enter a valid symbol or company name.',
+        })
+
+    security_search = search_func or search_security_symbols
+    for query in queries:
+        payload = security_search(query)
+        for item in payload.get('items', ()):
+            if security_search_item_matches_submission(item, data):
+                return item
+
+    raise SecuritySelectionValidationError({
+        'security': 'Selected security could not be verified.',
+    })
+
+
+def get_verified_security_defaults(search_item):
+    symbol = normalize_security_symbol(search_item.get('symbol'))
+    if not symbol:
+        raise SecuritySelectionValidationError({
+            'symbol': 'Selected security is missing a symbol.',
+        })
+
+    asset_type = get_asset_type_from_instrument_type(search_item.get('instrument_type'))
+    if asset_type is None:
+        raise SecuritySelectionValidationError({
+            'instrument_type': 'Only supported stock and ETF securities can be selected.',
+        })
+
+    return {
+        'symbol': symbol,
+        'name': normalize_security_search_text(search_item.get('name')) or symbol,
+        'asset_type': asset_type,
+        'exchange': normalize_security_exchange(search_item.get('exchange')),
+        'mic_code': normalize_security_mic_code(search_item.get('mic_code')),
+        'country': normalize_security_search_text(search_item.get('country')),
+        'currency': normalize_security_currency(search_item.get('currency')),
+    }
+
+
+def update_security_metadata_if_needed(security, defaults):
+    updates = {}
+    for field in ('mic_code', 'country', 'currency'):
+        if not getattr(security, field) and defaults.get(field):
+            updates[field] = defaults[field]
+
+    if not security.exchange and defaults.get('exchange'):
+        updates['exchange'] = defaults['exchange']
+    if not security.name and defaults.get('name'):
+        updates['name'] = defaults['name']
+    if security.asset_type != defaults['asset_type']:
+        updates['asset_type'] = defaults['asset_type']
+    if not security.is_active:
+        updates['is_active'] = True
+
+    if not updates:
+        return security
+
+    for field, value in updates.items():
+        setattr(security, field, value)
+    security.save(update_fields=[*updates.keys(), 'updated_at'])
+    return security
+
+
+def get_or_create_verified_security(search_item):
+    local_id = search_item.get('id')
+    defaults = get_verified_security_defaults(search_item)
+    symbol = defaults['symbol']
+    mic_code = defaults['mic_code']
+    exchange = defaults['exchange']
+    queryset = Security.objects.select_for_update().filter(symbol=symbol)
+
+    if local_id:
+        try:
+            security = queryset.get(pk=local_id, is_active=True)
+        except Security.DoesNotExist:
+            raise SecuritySelectionValidationError({
+                'security': 'Selected security is no longer available.',
+            })
+        return update_security_metadata_if_needed(security, defaults), False
+
+    security = queryset.filter(mic_code=mic_code).first() if mic_code else None
+    if security is None and exchange:
+        security = queryset.filter(exchange__iexact=exchange, mic_code='').first()
+    if security is None:
+        symbol_matches = tuple(queryset)
+        if len(symbol_matches) == 1 and not symbol_matches[0].mic_code:
+            security = symbol_matches[0]
+    if security is not None:
+        return update_security_metadata_if_needed(security, defaults), False
+
+    try:
+        with transaction.atomic():
+            return Security.objects.create(**defaults, is_active=True), True
+    except IntegrityError:
+        security = Security.objects.filter(symbol=symbol, mic_code=mic_code).first()
+        if security is None:
+            raise
+        return update_security_metadata_if_needed(security, defaults), False
+
+
+def resolve_security_selection(data):
+    verified_item = get_verified_security_search_item(data)
+    with transaction.atomic():
+        security, created = get_or_create_verified_security(verified_item)
+    invalidate_security_symbol_search_cache(
+        *get_security_selection_queries(data),
+        security.symbol,
+        security.name,
+    )
+    return security, created, verified_item
 
 
 def normalize_range(range_key):
@@ -848,8 +1052,11 @@ def get_daily_outputsize_for_window(start_date, end_date):
     return min(max((end_date - start_date).days + 10, 2), MARKET_DATA_MAX_DAILY_OUTPUTSIZE)
 
 
-def fetch_daily_bars_for_window(security, start_date, end_date, client):
-    if end_date >= get_latest_complete_market_date():
+def fetch_daily_bars_for_window(security, start_date, end_date, client, *, require_exact_window=False):
+    # A backtest needs its full pre-start history. Supplying both boundaries
+    # prevents Twelve Data from silently returning its default recent window.
+    # Keep the existing latest-window behavior for market-data screens.
+    if not require_exact_window and end_date >= get_latest_complete_market_date():
         bars = client.get_time_series(
             symbol=security.symbol,
             interval='1day',
@@ -857,11 +1064,42 @@ def fetch_daily_bars_for_window(security, start_date, end_date, client):
         )
         return [bar for bar in bars if start_date <= bar.date <= end_date]
 
-    return client.get_time_series(
+    bars = client.get_time_series(
         symbol=security.symbol,
         interval='1day',
         start_date=start_date,
         end_date=end_date,
+        outputsize=get_daily_outputsize_for_window(start_date, end_date),
+    )
+    return [bar for bar in bars if start_date <= bar.date <= end_date]
+
+
+def get_daily_bars_for_session_close(
+    security,
+    start_date,
+    end_date,
+    client,
+    *,
+    force_refresh=False,
+):
+    """Return daily bars for official session close alignment.
+
+    Prefer the fresh database daily cache when it already covers the requested
+    window so an intraday request does not spend a second Twelve Data call on
+    the daily series.  When the cache is missing, stale, or incomplete, fall
+    back to the existing provider path unchanged.
+    """
+
+    if (
+        not force_refresh
+        and cache_has_requested_coverage(security, start_date, end_date)
+    ):
+        cached_daily_bars = get_cached_daily_prices(security, start_date, end_date)
+        if cached_daily_bars:
+            return cached_daily_bars, True
+    return (
+        fetch_daily_bars_for_window(security, start_date, end_date, client),
+        False,
     )
 
 
@@ -924,10 +1162,24 @@ def upsert_daily_bars(security, bars):
             )
 
 
-def fetch_and_cache_daily_prices(security, start_date, end_date, client=None):
+def fetch_and_cache_daily_prices(security, start_date, end_date, client=None, *, require_exact_window=False):
     market_data_client = client or TwelveDataClient()
-    bars = fetch_daily_bars_for_window(security, get_provider_start_date(start_date), end_date, market_data_client)
+    provider_start_date = get_provider_start_date(start_date)
+    bars = fetch_daily_bars_for_window(
+        security,
+        provider_start_date,
+        end_date,
+        market_data_client,
+        require_exact_window=require_exact_window,
+    )
     upsert_daily_bars(security, bars)
+    return {
+        'provider_start_date': provider_start_date.isoformat(),
+        'provider_end_date': end_date.isoformat(),
+        'outputsize': get_daily_outputsize_for_window(provider_start_date, end_date),
+        'received_rows': len(bars),
+        'provider_response': dict(getattr(market_data_client, 'last_response_metadata', {}) or {}),
+    }
 
 
 def fetch_time_series_prices(security, start_date, end_date, interval, client=None):
@@ -983,12 +1235,33 @@ def get_provider_response_summary(client):
     }
 
 
-def apply_official_session_closes(security, values, start_date, end_date, client):
+def apply_official_session_closes(
+    security,
+    values,
+    start_date,
+    end_date,
+    client,
+    *,
+    force_refresh=False,
+):
     if not values:
         return values, (), {}
 
-    daily_bars = fetch_daily_bars_for_window(security, start_date, end_date, client)
-    daily_metadata = get_provider_response_summary(client)
+    daily_bars, daily_bars_from_cache = get_daily_bars_for_session_close(
+        security,
+        start_date,
+        end_date,
+        client,
+        force_refresh=force_refresh,
+    )
+    if daily_bars_from_cache:
+        daily_metadata = {
+            'source': 'database_cache',
+            'cache_status': 'hit',
+            'record_count': len(daily_bars),
+        }
+    else:
+        daily_metadata = get_provider_response_summary(client)
     official_closes = {bar.date: bar.close for bar in daily_bars}
     last_rth_index_by_date = {}
     for index, value in enumerate(values):
@@ -1630,6 +1903,7 @@ def get_security_daily_market_data(
                         warmup_start_date,
                         requested_end_date,
                         market_data_client,
+                        force_refresh=force_refresh,
                     )
                     provider_metadata['session_close_source'] = daily_metadata
                 except TwelveDataError as exc:

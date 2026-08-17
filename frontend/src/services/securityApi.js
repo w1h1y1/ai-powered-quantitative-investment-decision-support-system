@@ -12,6 +12,9 @@ export const securityApi = {
   list() {
     return apiRequest('/api/securities/')
   },
+  sectorContext({ securityId }) {
+    return apiRequest(`/api/securities/${securityId}/sector-context/`)
+  },
   search(query) {
     const normalizedQuery = query.trim()
     if (normalizedQuery.length < 2) {
@@ -57,5 +60,14 @@ export const securityApi = {
     }
 
     return symbolSearchRequests.get(cacheKey)
+  },
+  resolve(selection) {
+    return apiRequest('/api/securities/resolve/', {
+      method: 'POST',
+      body: selection,
+    }).then((payload) => {
+      symbolSearchCache.clear()
+      return payload
+    })
   },
 }

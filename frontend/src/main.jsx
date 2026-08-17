@@ -9,7 +9,6 @@ import './styles/watchlist.css'
 import './styles/portfolio.css'
 import './styles/backtest.css'
 import './styles/ai-insights.css'
-import './styles/prediction-lab.css'
 import './styles/auth.css'
 
 createRoot(document.getElementById('root')).render(

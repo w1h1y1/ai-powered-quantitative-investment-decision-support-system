@@ -1,4 +1,7 @@
 export default function ForecastReliability({ reliability }) {
+  if (!reliability) {
+    return <section className="prediction-card prediction-equal-card"><div className="prediction-card-header"><div><p>Uncertainty review</p><h2>Forecast Reliability</h2><span>The first ML version reports a transparent confidence label; expanded reliability diagnostics are not implemented yet.</span></div></div></section>
+  }
   const summary = reliability.summary.replace(
     /\d+ of 4 models share the dominant direction/,
     'the underlying forecast signals show mixed consistency',
@@ -14,8 +17,8 @@ export default function ForecastReliability({ reliability }) {
     if (item.label === 'Historical Test Performance') {
       return {
         ...item,
-        label: 'Simulated Reliability',
-        detail: `Simulated validation evidence is ${item.value.toLowerCase()} for the current configuration.`,
+        label: 'Validation Reliability',
+        detail: `Chronological validation evidence is ${item.value.toLowerCase()} for the current configuration.`,
       }
     }
     return item

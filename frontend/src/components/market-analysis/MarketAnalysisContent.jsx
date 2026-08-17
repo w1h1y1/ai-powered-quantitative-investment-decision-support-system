@@ -18,14 +18,28 @@ import {
   validateCustomMarketDataRange,
 } from '../dashboard/dashboardSecurityModel'
 import { marketDataApi } from '../../services/marketDataApi'
+import { marketRegimeApi } from '../../services/marketRegimeApi'
 import { securityApi } from '../../services/securityApi'
+import { strategyEvaluationApi } from '../../services/strategyEvaluationApi'
 import IndicatorOverlayControls from './IndicatorOverlayControls'
 import MacdChart from './MacdChart'
 import MarketControls from './MarketControls'
 import MarketPriceChart from './MarketPriceChart'
+import MarketRegimePanel from './MarketRegimePanel'
 import RsiChart from './RsiChart'
+import StrategyEvaluationPanel from './StrategyEvaluationPanel'
 import TechnicalSummary from './TechnicalSummary'
 import VolumeChart from './VolumeChart'
+import {
+  getMarketRegimePanelState,
+  isCurrentMarketRegimeRequest,
+  normalizeMarketRegime,
+} from './marketRegimeModel'
+import {
+  getStrategyEvaluationPanelState,
+  isCurrentStrategyEvaluationRequest,
+  normalizeStrategyEvaluation,
+} from './strategyEvaluationModel'
 
 const marketOverlayOptions = [
   { id: 'ma5', label: 'MA5', fullName: 'Moving Average 5', type: 'ma', period: 5 },
@@ -152,6 +166,20 @@ export default function MarketAnalysisContent({
   const [isMarketDataLoading, setIsMarketDataLoading] = useState(false)
   const [marketDataError, setMarketDataError] = useState('')
   const [marketDataReloadKey, setMarketDataReloadKey] = useState(0)
+  const [marketRegimeRequest, setMarketRegimeRequest] = useState({
+    data: null,
+    error: '',
+    status: 'idle',
+    symbol: '',
+  })
+  const [marketRegimeReloadKey, setMarketRegimeReloadKey] = useState(0)
+  const [strategyEvaluationRequest, setStrategyEvaluationRequest] = useState({
+    data: null,
+    error: '',
+    status: 'idle',
+    symbol: '',
+  })
+  const [strategyEvaluationReloadKey, setStrategyEvaluationReloadKey] = useState(0)
   const [selectedOverlays, setSelectedOverlays] = useState(['ma5', 'ma10', 'ma20'])
   const [chartType, setChartType] = useState('candlestick')
   const [priceVisibleWindow, setPriceVisibleWindow] = useState(null)
@@ -160,6 +188,8 @@ export default function MarketAnalysisContent({
   const [macdVisibleWindow, setMacdVisibleWindow] = useState(null)
   const securityRequestIdRef = useRef(0)
   const marketDataRequestIdRef = useRef(0)
+  const marketRegimeRequestIdRef = useRef(0)
+  const strategyEvaluationRequestIdRef = useRef(0)
 
   const loadSecurities = useCallback(() => {
     const requestId = securityRequestIdRef.current + 1
@@ -200,6 +230,16 @@ export default function MarketAnalysisContent({
   const controlSelectedSymbol = selectedSecurity?.symbol ?? requestedSymbol
   const selectedStock = selectedSecurity ? buildMarketAnalysisStock(selectedSecurity) : null
   const controlStocks = useMemo(() => securities.map(buildMarketAnalysisStock), [securities])
+  const selectedSecuritySymbol = selectedSecurity?.symbol ?? ''
+  const selectedSecurityId = selectedSecurity?.id ?? null
+  const visibleMarketRegimeRequest = getMarketRegimePanelState(
+    marketRegimeRequest,
+    selectedSecuritySymbol,
+  )
+  const visibleStrategyEvaluationRequest = getStrategyEvaluationPanelState(
+    strategyEvaluationRequest,
+    selectedSecuritySymbol,
+  )
 
   useEffect(() => {
     if (!selectedSecurity) return
@@ -266,6 +306,90 @@ export default function MarketAnalysisContent({
       ignore = true
     }
   }, [customRange, marketDataReloadKey, selectedInterval, selectedRange, selectedSecurity])
+
+  useEffect(() => {
+    if (!selectedSecuritySymbol) {
+      marketRegimeRequestIdRef.current += 1
+      setMarketRegimeRequest({ data: null, error: '', status: 'idle', symbol: '' })
+      return undefined
+    }
+
+    const requestId = marketRegimeRequestIdRef.current + 1
+    let ignore = false
+    marketRegimeRequestIdRef.current = requestId
+    setMarketRegimeRequest({
+      data: null,
+      error: '',
+      status: 'loading',
+      symbol: selectedSecuritySymbol,
+    })
+
+    marketRegimeApi.get({ symbol: selectedSecuritySymbol })
+      .then((response) => {
+        if (ignore || !isCurrentMarketRegimeRequest(marketRegimeRequestIdRef.current, requestId)) return
+        setMarketRegimeRequest({
+          data: normalizeMarketRegime(response, selectedSecuritySymbol, selectedSecurityId),
+          error: '',
+          status: 'ready',
+          symbol: selectedSecuritySymbol,
+        })
+      })
+      .catch((error) => {
+        if (ignore || !isCurrentMarketRegimeRequest(marketRegimeRequestIdRef.current, requestId)) return
+        setMarketRegimeRequest({
+          data: null,
+          error: getErrorMessage(error, `Unable to load market regime for ${selectedSecuritySymbol}.`),
+          status: 'error',
+          symbol: selectedSecuritySymbol,
+        })
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [marketRegimeReloadKey, selectedSecurityId, selectedSecuritySymbol])
+
+  useEffect(() => {
+    if (!selectedSecuritySymbol) {
+      strategyEvaluationRequestIdRef.current += 1
+      setStrategyEvaluationRequest({ data: null, error: '', status: 'idle', symbol: '' })
+      return undefined
+    }
+
+    const requestId = strategyEvaluationRequestIdRef.current + 1
+    let ignore = false
+    strategyEvaluationRequestIdRef.current = requestId
+    setStrategyEvaluationRequest({
+      data: null,
+      error: '',
+      status: 'loading',
+      symbol: selectedSecuritySymbol,
+    })
+
+    strategyEvaluationApi.evaluate({ symbol: selectedSecuritySymbol })
+      .then((response) => {
+        if (ignore || !isCurrentStrategyEvaluationRequest(strategyEvaluationRequestIdRef.current, requestId)) return
+        setStrategyEvaluationRequest({
+          data: normalizeStrategyEvaluation(response, selectedSecuritySymbol),
+          error: '',
+          status: 'ready',
+          symbol: selectedSecuritySymbol,
+        })
+      })
+      .catch((error) => {
+        if (ignore || !isCurrentStrategyEvaluationRequest(strategyEvaluationRequestIdRef.current, requestId)) return
+        setStrategyEvaluationRequest({
+          data: null,
+          error: getErrorMessage(error, `Unable to load strategy evaluation for ${selectedSecuritySymbol}.`),
+          status: 'error',
+          symbol: selectedSecuritySymbol,
+        })
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [strategyEvaluationReloadKey, selectedSecurityId, selectedSecuritySymbol])
 
   const selectedHistory = useMemo(
     () => buildMarketAnalysisHistory(marketData, selectedRange, selectedInterval),
@@ -358,6 +482,26 @@ export default function MarketAnalysisContent({
     setMarketDataReloadKey((current) => current + 1)
   }
 
+  const retryMarketRegime = () => {
+    setMarketRegimeRequest({
+      data: null,
+      error: '',
+      status: 'loading',
+      symbol: selectedSecuritySymbol,
+    })
+    setMarketRegimeReloadKey((current) => current + 1)
+  }
+
+  const retryStrategyEvaluation = () => {
+    setStrategyEvaluationRequest({
+      data: null,
+      error: '',
+      status: 'loading',
+      symbol: selectedSecuritySymbol,
+    })
+    setStrategyEvaluationReloadKey((current) => current + 1)
+  }
+
   const toggleOverlay = (overlayId) => {
     setSelectedOverlays((current) =>
       current.includes(overlayId)
@@ -397,6 +541,26 @@ export default function MarketAnalysisContent({
                 ? 'Cached Twelve Data OHLCV via Django'
                 : 'Twelve Data OHLCV via Django'
           }
+        />
+      )}
+
+      {selectedSecurity && (
+        <MarketRegimePanel
+          symbol={selectedSecuritySymbol}
+          regime={visibleMarketRegimeRequest.data}
+          isLoading={visibleMarketRegimeRequest.status === 'loading'}
+          error={visibleMarketRegimeRequest.status === 'error' ? visibleMarketRegimeRequest.error : ''}
+          onRetry={retryMarketRegime}
+        />
+      )}
+
+      {selectedSecurity && (
+        <StrategyEvaluationPanel
+          symbol={selectedSecuritySymbol}
+          evaluation={visibleStrategyEvaluationRequest.data}
+          isLoading={visibleStrategyEvaluationRequest.status === 'loading'}
+          error={visibleStrategyEvaluationRequest.status === 'error' ? visibleStrategyEvaluationRequest.error : ''}
+          onRetry={retryStrategyEvaluation}
         />
       )}
 

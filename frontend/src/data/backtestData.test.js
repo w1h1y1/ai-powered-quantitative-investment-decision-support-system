@@ -2,11 +2,16 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  backtestBenchmarkOptions,
+  backtestMarketBenchmark,
   buildBacktestFailureState,
   buildBacktestRequestPayload,
+  createDefaultBacktestConfig,
   createBacktestRunRequest,
   defaultBacktestConfig,
+  filterBacktestBenchmarkOptions,
   normalizeBacktestResult,
+  sanitizeBacktestBenchmarkSymbol,
   sanitizeBacktestHistory,
   validateBacktestConfig,
 } from './backtestData.js'
@@ -28,6 +33,25 @@ function buildResponse() {
     core_holding_days: 40,
     core_entry_count: 1,
     core_exit_count: 0,
+    core_add_count: 2,
+    core_reduce_count: 1,
+    core_full_exit_count: 0,
+    average_core_holding_period: '40.000000',
+    median_core_holding_period: '40.000000',
+    average_core_exposure: '32.500000',
+    max_core_exposure: '55.000000',
+    full_exit_to_next_buy_average_gap: '0.000000',
+    full_exit_to_next_buy_minimum_gap: 0,
+    core_strategy_diagnostics: {
+      core_buy_count: 1,
+      core_add_count: 2,
+      core_reduce_count: 1,
+      core_full_exit_count: 0,
+      trend_state_counts: { STRONG_BULL: 10, BULL: 20, WEAK_BULL: 8, BEAR: 3, REVERSAL_SETUP: 1 },
+      reentry_reasons: { CORE_ENTRY_BULL: 1 },
+      reduce_reasons: { CORE_REDUCE_WEAK_TREND: 1 },
+      full_exit_reasons: {},
+    },
     swing_return_contribution: '1.000000',
     swing_realized_profit_loss: '100.000000',
     swing_unrealized_profit_loss: '0.000000',
@@ -35,19 +59,29 @@ function buildResponse() {
     swing_entry_count: 1,
     swing_exit_count: 1,
     average_days_per_swing_cycle: '4.000000',
+    median_days_per_swing_cycle: '3.000000',
+    minimum_days_per_swing_cycle: 1,
+    maximum_days_per_swing_cycle: 7,
     profitable_swing_cycle_count: 1,
     swing_win_rate: '100.000000',
     average_swing_return: '2.000000',
     swing_fees: '2.000000',
     swing_total_fees: '2.000000',
     swing_turnover: '30.000000',
+    swing_holding_period_diagnostics: {
+      swing_round_trip_count: 1,
+      holding_1_bar_count: 1,
+      holding_2_bars_count: 0,
+      holding_3_to_5_bars_count: 0,
+      holding_over_5_bars_count: 0,
+      round_trips: [],
+    },
     swing_signal_diagnostics: {
       eligible_core_days: 42,
       market_bear_days: 3,
       rsi_pullback_detected_days: 12,
       rsi_upward_cross_days: 2,
       close_above_trend_average_days: 38,
-      cooldown_blocked_days: 1,
       swing_entry_signal_count: 1,
       swing_exit_signal_count: 1,
       primary_block_reason_counts: { NO_RSI_PULLBACK: 20, ENTRY_SIGNAL_CREATED: 1 },
@@ -66,8 +100,14 @@ function buildResponse() {
       ma60: '110.000000',
       rsi14: '52.000000',
       atr14: '2.000000',
+      macd: '1.500000',
+      macd_signal: '1.250000',
+      macd_histogram: '0.250000',
       bollinger_upper: '125.000000',
       market_regime: 'BULL',
+      trend_state: 'STRONG_BULL',
+      trend_bear_score: 0,
+      trend_reversal_score: 1,
       core_quantity: '25.00000000',
       core_average_cost: '100.040000',
       swing_quantity: '0.00000000',
@@ -81,7 +121,7 @@ function buildResponse() {
     trades: [{
       id: 'trade-1',
       position_layer: 'CORE',
-      reason: 'CORE_TREND_ENTRY',
+      reason: 'CORE_ENTRY_BULL',
       signal_date: '2026-01-01',
       execution_date: '2026-01-02',
       type: 'BUY',
@@ -122,13 +162,13 @@ function buildResponse() {
       core_risk_percentage: '0.020000',
       core_atr_multiplier: '2.500000',
       max_core_exposure: '0.800000',
+      core_reduce_fraction: '0.250000',
       swing_risk_fraction: '0.010000',
       swing_risk_percentage: '0.010000',
-      swing_atr_multiplier: '1.200000',
+      swing_atr_multiplier: '1.500000',
       swing_rsi_lookback: 10,
       swing_rsi_entry_level: '45.000000',
       swing_rsi_exit_level: '60.000000',
-      swing_cooldown_days: 2,
       swing_trend_average: 'EMA10',
       swing_average_type: 'EMA10',
     },
@@ -144,42 +184,149 @@ test('default Market-Regime Core and Swing configuration validates', () => {
   assert.equal(defaultBacktestConfig.coreRiskPercent, '2')
   assert.equal(defaultBacktestConfig.coreAtrMultiplier, '2.5')
   assert.equal(defaultBacktestConfig.maxCoreExposurePercent, '80')
+  assert.equal(defaultBacktestConfig.coreReduceFractionPercent, '25')
   assert.equal(defaultBacktestConfig.swingRiskPercent, '1')
-  assert.equal(defaultBacktestConfig.swingAtrMultiplier, '1.2')
+  assert.equal(defaultBacktestConfig.swingAtrMultiplier, '1.5')
   assert.equal(defaultBacktestConfig.swingRsiLookback, '10')
+  assert.equal(defaultBacktestConfig.swingRsiEntryLevel, '45')
+  assert.equal(defaultBacktestConfig.swingRsiExitLevel, '60')
   assert.equal(defaultBacktestConfig.swingAverageType, 'EMA10')
+  assert.equal('swingCooldownDays' in defaultBacktestConfig, false)
+})
+
+test('Backtest market benchmark defaults to SPY broad-market reference', () => {
+  assert.equal(backtestMarketBenchmark.symbol, 'SPY')
+  assert.equal(backtestMarketBenchmark.name, 'SPDR S&P 500 ETF')
+  assert.equal(defaultBacktestConfig.benchmarkSymbol, 'SPY')
+})
+
+test('Backtest benchmark whitelist contains benchmark ETFs only', () => {
+  const symbols = backtestBenchmarkOptions.map((option) => option.symbol)
+  for (const symbol of ['SPY', 'QQQ', 'XLF', 'XLE', 'XLC']) {
+    assert.ok(symbols.includes(symbol), `expected ${symbol} in whitelist`)
+  }
+  for (const symbol of ['AAPL', 'MSFT', 'TSLA', 'JPM']) {
+    assert.ok(!symbols.includes(symbol), `${symbol} must not be a benchmark option`)
+  }
+})
+
+test('benchmark sanitization keeps whitelist symbols and falls back to SPY otherwise', () => {
+  assert.equal(sanitizeBacktestBenchmarkSymbol('qqq'), 'QQQ')
+  assert.equal(sanitizeBacktestBenchmarkSymbol('QQQ', ['SPY', 'QQQ', 'XLF']), 'QQQ')
+  assert.equal(sanitizeBacktestBenchmarkSymbol('AAPL'), 'SPY')
+  assert.equal(sanitizeBacktestBenchmarkSymbol('QQQ', ['SPY', 'XLF']), 'SPY')
+  assert.equal(sanitizeBacktestBenchmarkSymbol(null), 'SPY')
+})
+
+test('benchmark options are filtered by asset-allowed symbols and existing assets', () => {
+  const assets = [
+    { symbol: 'SPY' },
+    { symbol: 'QQQ' },
+    { symbol: 'XLK' },
+    { symbol: 'XOM' },
+  ]
+
+  const aaplOptions = filterBacktestBenchmarkOptions(['SPY', 'XLK', 'QQQ'], assets)
+  assert.deepEqual(aaplOptions.map((option) => option.symbol), ['SPY', 'QQQ', 'XLK'])
+  assert.ok(!aaplOptions.some((option) => option.symbol === 'XLF'))
+
+  const xomOptions = filterBacktestBenchmarkOptions(['SPY', 'XLE'], assets)
+  assert.deepEqual(xomOptions.map((option) => option.symbol), ['SPY'])
+})
+
+test('Backtest request payload propagates the selected benchmark', () => {
+  const config = createDefaultBacktestConfig()
+  const asset = { symbol: 'AAPL', name: 'Apple Inc.', exchange: 'NASDAQ', type: 'Stock' }
+
+  const payload = buildBacktestRequestPayload(config, asset)
+
+  assert.equal(payload.benchmark, 'SPY')
+  assert.equal(payload.security_selection.symbol, 'AAPL')
+
+  const qqqConfig = { ...createDefaultBacktestConfig(), benchmarkSymbol: 'QQQ' }
+  const qqqPayload = buildBacktestRequestPayload(qqqConfig, asset)
+  assert.equal(qqqPayload.benchmark, 'QQQ')
+
+  const xlkConfig = { ...createDefaultBacktestConfig(), benchmarkSymbol: 'XLK' }
+  const xlkPayload = buildBacktestRequestPayload(xlkConfig, asset)
+  assert.equal(xlkPayload.benchmark, 'XLK')
+})
+
+test('normalized result config records the selected benchmark and rejects non-whitelist values', () => {
+  const response = buildResponse()
+  response.benchmark = { id: 4, symbol: 'QQQ', name: 'Invesco QQQ ETF' }
+  const fallbackConfig = { benchmarkSymbol: 'SPY' }
+
+  const result = normalizeBacktestResult(response, fallbackConfig)
+
+  assert.equal(result.config.benchmarkSymbol, 'QQQ')
+  assert.equal(result.asset.symbol, 'TEST')
+
+  response.benchmark = { id: 99, symbol: 'AAPL', name: 'Apple Inc.' }
+  const sanitized = normalizeBacktestResult(response, fallbackConfig)
+  assert.equal(sanitized.config.benchmarkSymbol, 'SPY')
+})
+
+test('Backtest date defaults use the local calendar date and one calendar year lookback', () => {
+  const config = createDefaultBacktestConfig(new Date(2026, 7, 9, 0, 15))
+
+  assert.equal(config.endDate, '2026-08-09')
+  assert.equal(config.startDate, '2025-08-09')
+  assert.match(config.startDate, /^\d{4}-\d{2}-\d{2}$/)
+  assert.match(config.endDate, /^\d{4}-\d{2}-\d{2}$/)
+})
+
+test('Backtest one-year lookback clamps leap day without UTC conversion', () => {
+  const config = createDefaultBacktestConfig(new Date(2024, 1, 29, 0, 15))
+
+  assert.equal(config.endDate, '2024-02-29')
+  assert.equal(config.startDate, '2023-02-28')
 })
 
 test('normalizeBacktestResult preserves layered positions, indicators, trades, and comparisons', () => {
   const result = normalizeBacktestResult(buildResponse())
 
-  assert.equal(result.schemaVersion, 5)
+  assert.equal(result.schemaVersion, 6)
   assert.equal(result.strategy.id, 'market-regime-core-swing')
   assert.equal(result.benchmark.symbol, 'SPY')
   assert.deepEqual(
     [result.points[0].ma10, result.points[0].ma20, result.points[0].ma60, result.points[0].marketRegime],
     [117, 115, 110, 'BULL'],
   )
+  assert.deepEqual(
+    [result.points[0].macd, result.points[0].macdSignal, result.points[0].macdHistogram, result.points[0].trendState],
+    [1.5, 1.25, 0.25, 'STRONG_BULL'],
+  )
   assert.equal(result.points[0].coreQuantity, 25)
   assert.equal(result.points[0].swingQuantity, 0)
   assert.equal(result.trades[0].positionLayer, 'CORE')
-  assert.equal(result.trades[0].reason, 'CORE_TREND_ENTRY')
+  assert.equal(result.trades[0].reason, 'CORE_ENTRY_BULL')
   assert.equal(result.trades[0].coreQuantityAfter, 25)
   assert.equal(result.trades[0].riskFraction, 0.02)
   assert.equal(result.metrics.executedOrderCount, 3)
   assert.equal(result.coreMetrics.holdingDays, 40)
+  assert.equal(result.coreMetrics.addCount, 2)
+  assert.equal(result.coreMetrics.reduceCount, 1)
+  assert.equal(result.coreMetrics.averageExposure, 32.5)
   assert.equal(result.swingMetrics.cycleCount, 1)
   assert.equal(result.comparisons.length, 3)
   assert.equal(result.config.coreRiskPercent, '2')
   assert.equal(result.config.maxCoreExposurePercent, '80')
+  assert.equal(result.config.coreReduceFractionPercent, '25')
   assert.equal(result.config.coreAtrMultiplier, '2.5')
   assert.equal(result.parametersUsed.swingRiskPercent, 1)
   assert.equal(result.parametersUsed.swingRsiLookback, 10)
+  assert.equal('swingCooldownDays' in result.parametersUsed, false)
   assert.equal(result.points[0].swingAverage, 118)
   assert.equal(result.swingMetrics.averageDaysPerCycle, 4)
+  assert.equal(result.swingMetrics.medianDaysPerCycle, 3)
+  assert.equal(result.swingMetrics.oneBarCycleCount, 1)
+  assert.equal(result.swingMetrics.losingCycleCount, 0)
+  assert.equal(result.swingHoldingPeriodDiagnostics.swing_round_trip_count, 1)
   assert.equal(result.swingSignalDiagnostics.eligible_core_days, 42)
   assert.equal(result.swingSignalDiagnostics.swing_entry_signal_count, 1)
   assert.equal(result.swingSignalDiagnostics.primary_block_reason_counts.NO_RSI_PULLBACK, 20)
+  assert.equal(result.coreStrategyDiagnostics.trend_state_counts.STRONG_BULL, 10)
 })
 
 test('normalization preserves missing indicator values as null instead of zero', () => {
@@ -237,13 +384,13 @@ test('request payload uses the latest config and serializes every numeric parame
     coreRiskPercent: '2',
     coreAtrMultiplier: '4.000000',
     maxCoreExposurePercent: '20',
+    coreReduceFractionPercent: '30',
     swingRiskPercent: '1',
     swingAtrMultiplier: '2.500000',
     swingRsiLookback: '8',
     swingRsiEntryLevel: '50',
     swingRsiExitLevel: '58',
     swingAverageType: 'EMA10',
-    swingCooldownDays: '1',
   }
 
   const payload = buildBacktestRequestPayload(config, 42)
@@ -256,13 +403,13 @@ test('request payload uses the latest config and serializes every numeric parame
       core_risk_fraction: payload.core_risk_fraction,
       core_atr_multiplier: payload.core_atr_multiplier,
       max_core_exposure: payload.max_core_exposure,
+      core_reduce_fraction: payload.core_reduce_fraction,
       swing_risk_fraction: payload.swing_risk_fraction,
       swing_atr_multiplier: payload.swing_atr_multiplier,
       swing_rsi_lookback: payload.swing_rsi_lookback,
       swing_rsi_entry_level: payload.swing_rsi_entry_level,
       swing_rsi_exit_level: payload.swing_rsi_exit_level,
       swing_trend_average: payload.swing_trend_average,
-      swing_cooldown_days: payload.swing_cooldown_days,
     },
     {
       security: 42,
@@ -271,13 +418,13 @@ test('request payload uses the latest config and serializes every numeric parame
       core_risk_fraction: 0.02,
       core_atr_multiplier: 4,
       max_core_exposure: 0.2,
+      core_reduce_fraction: 0.3,
       swing_risk_fraction: 0.01,
       swing_atr_multiplier: 2.5,
       swing_rsi_lookback: 8,
       swing_rsi_entry_level: 50,
       swing_rsi_exit_level: 58,
       swing_trend_average: 'EMA10',
-      swing_cooldown_days: 1,
     },
   )
   Object.values(payload).forEach((value) => {
@@ -289,6 +436,8 @@ test('run request snapshots current asset and parameters without reading an old 
   const request = createBacktestRunRequest({
     ...defaultBacktestConfig,
     symbol: 'MSFT',
+    startDate: '2025-07-01',
+    endDate: '2026-06-30',
     coreFastMa: '9',
     coreRiskPercent: '1.5',
     swingRsiEntryLevel: '50',
@@ -299,6 +448,41 @@ test('run request snapshots current asset and parameters without reading an old 
   assert.equal(request.payload.core_fast_ma, 9)
   assert.equal(request.payload.core_risk_fraction, 0.015)
   assert.equal(request.payload.swing_rsi_entry_level, 50)
+  assert.equal(request.payload.start_date, '2025-07-01')
+  assert.equal(request.payload.end_date, '2026-06-30')
+})
+
+test('remote security request carries verified search metadata without inventing a local id', () => {
+  const request = createBacktestRunRequest(
+    { ...defaultBacktestConfig, symbol: 'TSLA' },
+    {
+      id: null,
+      symbol: 'TSLA',
+      name: 'Tesla Inc.',
+      type: 'Stock',
+      exchange: 'NASDAQ',
+      mic_code: 'XNAS',
+      instrument_type: 'Common Stock',
+      country: 'United States',
+      currency: 'USD',
+      source: 'remote',
+      search_query: 'Tesla',
+    },
+  )
+
+  assert.equal('security' in request.payload, false)
+  assert.equal(request.payload.symbol, 'TSLA')
+  assert.deepEqual(request.payload.security_selection, {
+    id: null,
+    symbol: 'TSLA',
+    name: 'Tesla Inc.',
+    exchange: 'NASDAQ',
+    mic_code: 'XNAS',
+    instrument_type: 'Common Stock',
+    country: 'United States',
+    currency: 'USD',
+    search_query: 'Tesla',
+  })
 })
 
 test('failed request state clears the prior result and identifies the failed asset', () => {
@@ -322,7 +506,8 @@ test('normalized six-decimal API parameters can be submitted again without preci
   const payload = buildBacktestRequestPayload(normalized.config, normalized.asset.id)
 
   assert.equal(payload.core_atr_multiplier, 2.5)
-  assert.equal(payload.swing_atr_multiplier, 1.2)
+  assert.equal(payload.swing_atr_multiplier, 1.5)
+  assert.equal('swing_cooldown_days' in payload, false)
   assert.equal(typeof payload.core_atr_multiplier, 'number')
   assert.equal(typeof payload.swing_atr_multiplier, 'number')
 })
@@ -347,7 +532,7 @@ test('schema 3 fraction-based saved results migrate to percentage inputs without
 
   const [migrated] = sanitizeBacktestHistory([legacy])
 
-  assert.equal(migrated.schemaVersion, 5)
+  assert.equal(migrated.schemaVersion, 6)
   assert.equal(migrated.config.coreRiskPercent, '1')
   assert.equal(migrated.config.maxCoreExposurePercent, '70')
   assert.equal(migrated.config.swingRiskPercent, '0.5')
@@ -357,5 +542,6 @@ test('schema 3 fraction-based saved results migrate to percentage inputs without
   assert.equal(migrated.config.swingRsiEntryLevel, '40')
   assert.equal(migrated.config.swingRsiExitLevel, '65')
   assert.equal(migrated.config.swingAverageType, 'SMA10')
-  assert.equal(migrated.config.swingCooldownDays, '0')
+  assert.equal('swingCooldownDays' in migrated.config, false)
+  assert.equal('swingCooldownDays' in migrated.parametersUsed, false)
 })

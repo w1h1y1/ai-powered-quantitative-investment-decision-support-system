@@ -1,59 +1,83 @@
 import {
-  forecastHorizonOptions,
-  historicalWindowOptions,
-  predictionAssets,
-} from '../../data/predictionMockData'
+  directionHorizonOptions,
+  predictionLookbackOptions,
+  returnHorizonOptions,
+} from '../../data/predictionConfig'
+import SecuritySearchSelect from '../security/SecuritySearchSelect'
 import Icon from '../Icon'
 
-export default function ForecastConfiguration({ config, isLoading, isValid, onChange, onSubmit }) {
+export default function ForecastConfiguration({
+  config,
+  assets,
+  selectedAsset,
+  isAssetsLoading,
+  isLoading,
+  isValid,
+  error,
+  onChange,
+  onSelectAsset,
+  onSubmit,
+}) {
   return (
     <section className="prediction-card prediction-config-card" aria-labelledby="prediction-config-title">
       <div className="prediction-card-header">
         <div>
           <p>Forecast setup</p>
           <h2 id="prediction-config-title">Forecast Configuration</h2>
-          <span>Configure a deterministic probabilistic market simulation.</span>
+          <span>Load real daily market data and technical indicators for a selected security.</span>
         </div>
       </div>
 
       <form className="prediction-config-form" onSubmit={onSubmit}>
         <div className="prediction-config-grid">
-          <label className="prediction-field">
+          <div className="prediction-field">
             <span>Asset</span>
-            <select
-              value={config.assetSymbol}
-              disabled={isLoading}
-              onChange={(event) => onChange('assetSymbol', event.target.value)}
-            >
-              {predictionAssets.map((asset) => (
-                <option value={asset.symbol} key={asset.symbol}>
-                  {asset.symbol} - {asset.name}
-                </option>
-              ))}
-            </select>
-          </label>
+            <SecuritySearchSelect
+              id="prediction-asset"
+              localSecurities={assets}
+              selectedSecurity={selectedAsset}
+              disabled={isAssetsLoading}
+              invalid={Boolean(error)}
+              describedBy={error ? 'prediction-asset-error' : undefined}
+              onSelect={onSelectAsset}
+            />
+            {error && <small id="prediction-asset-error">{error}</small>}
+          </div>
 
           <label className="prediction-field">
-            <span>Forecast Horizon</span>
+            <span>Direction Horizon</span>
             <select
-              value={config.horizon}
+              value={String(config.classificationForecastHorizon)}
               disabled={isLoading}
-              onChange={(event) => onChange('horizon', event.target.value)}
+              onChange={(event) => onChange('classificationForecastHorizon', Number(event.target.value))}
             >
-              {forecastHorizonOptions.map((option) => (
+              {directionHorizonOptions.map((option) => (
                 <option value={option.value} key={option.value}>{option.label}</option>
               ))}
             </select>
           </label>
 
           <label className="prediction-field">
-            <span>Historical Window</span>
+            <span>Return Horizon</span>
             <select
-              value={config.historicalWindow}
+              value={String(config.regressionForecastHorizon)}
               disabled={isLoading}
-              onChange={(event) => onChange('historicalWindow', event.target.value)}
+              onChange={(event) => onChange('regressionForecastHorizon', Number(event.target.value))}
             >
-              {historicalWindowOptions.map((option) => (
+              {returnHorizonOptions.map((option) => (
+                <option value={option.value} key={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="prediction-field">
+            <span>Historical Lookback</span>
+            <select
+              value={String(config.lookback)}
+              disabled={isLoading}
+              onChange={(event) => onChange('lookback', Number(event.target.value))}
+            >
+              {predictionLookbackOptions.map((option) => (
                 <option value={option.value} key={option.value}>{option.label}</option>
               ))}
             </select>
@@ -61,37 +85,13 @@ export default function ForecastConfiguration({ config, isLoading, isValid, onCh
         </div>
 
         <div className="prediction-config-footer">
-          <div className="prediction-toggle-grid">
-            <label className="prediction-toggle">
-              <input
-                type="checkbox"
-                checked={config.includeTechnicalIndicators}
-                disabled={isLoading}
-                onChange={(event) => onChange('includeTechnicalIndicators', event.target.checked)}
-              />
-              <span aria-hidden="true" />
-              <strong>Include Technical Indicators</strong>
-            </label>
-
-            <label className="prediction-toggle">
-              <input
-                type="checkbox"
-                checked={config.includeMarketContext}
-                disabled={isLoading}
-                onChange={(event) => onChange('includeMarketContext', event.target.checked)}
-              />
-              <span aria-hidden="true" />
-              <strong>Include Market Context</strong>
-            </label>
-          </div>
-
           <div className="prediction-config-actions">
-            <span>Mock forecast only. No model training or trade execution.</span>
+            <span>Direction and return models use independent targets, purge gaps, and chronological validation.</span>
             <button type="submit" disabled={!isValid || isLoading}>
               {isLoading ? (
-                <><i className="prediction-spinner" aria-hidden="true" />Generating Forecast...</>
+                <><i className="prediction-spinner" aria-hidden="true" />Running Prediction...</>
               ) : (
-                <><Icon name="prediction" />Generate Forecast</>
+                <><Icon name="prediction" />Run Prediction</>
               )}
             </button>
           </div>

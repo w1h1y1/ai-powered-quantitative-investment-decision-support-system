@@ -1,13 +1,30 @@
 import logging
 
 from django.conf import settings
-from rest_framework import filters, permissions, viewsets
+from rest_framework import filters, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Security
-from .serializers import SecurityMarketDataBarSerializer, SecuritySerializer
+from .regime_config import (
+    BROAD_MARKET_SYMBOL,
+    get_backtest_benchmark_options,
+    get_sector_benchmark,
+    get_security_sector,
+)
+from .regime_service import (
+    MarketRegimeDataRateLimited,
+    MarketRegimeDataUnavailable,
+    get_market_regime,
+)
+from .serializers import (
+    MarketRegimeQuerySerializer,
+    SecurityMarketDataBarSerializer,
+    SecuritySelectionSerializer,
+    SecuritySerializer,
+)
+from .strategy_selection_service import select_strategy
 from .services import (
     MARKET_DATA_MAX_BATCH_QUOTES,
     MARKET_DATA_QUOTE_STATUS_UNAVAILABLE,
@@ -15,6 +32,7 @@ from .services import (
     MarketDataInvalidSymbol,
     MarketDataRateLimited,
     MarketDataUnavailable,
+    SecuritySelectionValidationError,
     UnsupportedMarketDataInterval,
     UnsupportedMarketDataRange,
     UnsupportedMarketDataSecurity,
@@ -22,6 +40,7 @@ from .services import (
     get_security_daily_market_data,
     get_security_latest_quote,
     get_security_latest_quotes,
+    resolve_security_selection,
     search_security_symbols,
 )
 
@@ -49,6 +68,41 @@ class SecurityViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({'detail': str(exc)}, status=429)
         except MarketDataUnavailable as exc:
             return Response({'detail': str(exc)}, status=503)
+
+    @action(detail=False, methods=['post'], url_path='resolve')
+    def resolve(self, request):
+        serializer = SecuritySelectionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            security, created, _verified_item = resolve_security_selection(serializer.validated_data)
+        except SecuritySelectionValidationError as exc:
+            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+        except MarketDataRateLimited as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        except MarketDataUnavailable as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        return Response(
+            {
+                'security': SecuritySerializer(security).data,
+                'created': created,
+            },
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=['get'], url_path='sector-context')
+    def sector_context(self, request, pk=None):
+        security = self.get_object()
+        sector, sector_source = get_security_sector(security)
+        sector_benchmark = get_sector_benchmark(sector)
+        return Response({
+            'symbol': security.symbol,
+            'sector': sector,
+            'sector_source': sector_source,
+            'sector_benchmark': sector_benchmark,
+            'broad_market': BROAD_MARKET_SYMBOL,
+            'allowed_benchmarks': get_backtest_benchmark_options(security),
+        })
 
 
 class MarketDataSecurityMixin:
@@ -189,6 +243,36 @@ class MarketSummaryView(APIView):
 
     def get(self, request):
         return Response(get_market_summary(force_refresh=parse_refresh_flag(request)))
+
+
+class MarketRegimeView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        serializer = MarketRegimeQuerySerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        try:
+            payload = get_market_regime(serializer.resolved_security)
+        except MarketRegimeDataRateLimited as exc:
+            return Response({'detail': str(exc)}, status=429)
+        except MarketRegimeDataUnavailable as exc:
+            return Response({'detail': str(exc)}, status=503)
+        return Response(payload)
+
+
+class StrategySelectionView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        serializer = MarketRegimeQuerySerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        try:
+            market_regime_result = get_market_regime(serializer.resolved_security)
+        except MarketRegimeDataRateLimited as exc:
+            return Response({'detail': str(exc)}, status=429)
+        except MarketRegimeDataUnavailable as exc:
+            return Response({'detail': str(exc)}, status=503)
+        return Response(select_strategy(market_regime_result))
 
 
 class SecurityDailyMarketDataView(MarketDataSecurityMixin, APIView):

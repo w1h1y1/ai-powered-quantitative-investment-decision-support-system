@@ -18,13 +18,21 @@ from django.contrib import admin
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from backtest.views import BacktestRunView
+from agent.views import (
+    AgentAnalysisView,
+    AgentContextView,
+    InvestmentAgentView,
+    UnifiedAgentContextView,
+)
+from backtest.views import BacktestRunView, StrategyEvaluationView
 from market.views import (
+    MarketRegimeView,
     MarketSummaryView,
     SecurityDailyMarketDataView,
     SecurityLatestQuoteView,
     SecurityLatestQuotesView,
     SecurityViewSet,
+    StrategySelectionView,
 )
 from portfolio.views import (
     HoldingViewSet,
@@ -34,6 +42,7 @@ from portfolio.views import (
     PortfolioViewSet,
     TradeTransactionViewSet,
 )
+from prediction.views import PredictionGenerateView
 from watchlist.views import WatchlistAddSymbolView, WatchlistItemViewSet, WatchlistSummaryView, WatchlistViewSet
 
 router = DefaultRouter()
@@ -46,7 +55,15 @@ router.register('watchlist-items', WatchlistItemViewSet, basename='watchlist-ite
 
 urlpatterns = [
     path('api/auth/', include('accounts.urls')),
+    path('api/agent-context/', AgentContextView.as_view(), name='agent-context'),
+    path('api/agent/context/', UnifiedAgentContextView.as_view(), name='unified-agent-context'),
+    path('api/agent/analyze/', AgentAnalysisView.as_view(), name='agent-analyze'),
+    path('api/investment-agent/', InvestmentAgentView.as_view(), name='investment-agent'),
     path('api/backtests/run/', BacktestRunView.as_view(), name='backtest-run'),
+    path('api/strategy-evaluation/', StrategyEvaluationView.as_view(), name='strategy-evaluation'),
+    path('api/predictions/generate/', PredictionGenerateView.as_view(), name='prediction-generate'),
+    path('api/market-regime/', MarketRegimeView.as_view(), name='market-regime'),
+    path('api/strategy-selection/', StrategySelectionView.as_view(), name='strategy-selection'),
     path('api/market-data/summary/', MarketSummaryView.as_view(), name='market-data-summary'),
     path('api/market-data/quote/', SecurityLatestQuoteView.as_view(), name='market-data-quote'),
     path('api/market-data/quotes/', SecurityLatestQuotesView.as_view(), name='market-data-quotes'),

@@ -1,7 +1,18 @@
 import Icon from '../Icon'
 
 function formatSignedPercent(value) {
+  if (!Number.isFinite(value)) return 'N/A'
   return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`
+}
+
+function formatCurrency(value) {
+  if (!Number.isFinite(value)) return 'N/A'
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value)
 }
 
 function getProbabilityTone(value) {
@@ -9,30 +20,40 @@ function getProbabilityTone(value) {
 }
 
 export default function ForecastOverview({ forecast }) {
+  const classificationUnavailable = !forecast.predictionAvailable
+  const regressionUnavailable = !forecast.regressionPredictionAvailable
   const items = [
     {
-      label: 'Predicted Direction',
-      value: forecast.predictedDirection,
+      label: `${forecast.configuration.directionHorizonLabel} Direction`,
+      value: classificationUnavailable ? 'N/A' : forecast.predictedDirection,
       icon: 'trend',
-      tone: forecast.predictedDirection === 'Up' ? 'positive' : forecast.predictedDirection === 'Down' ? 'negative' : 'neutral',
+      tone: classificationUnavailable ? 'neutral' : forecast.predictedDirection === 'Up' ? 'positive' : forecast.predictedDirection === 'Down' ? 'negative' : 'neutral',
     },
     {
-      label: 'Probability of Increase',
-      value: `${forecast.probabilityIncrease}%`,
+      label: `${forecast.configuration.directionHorizonLabel} Probability of Increase`,
+      value: classificationUnavailable || !Number.isFinite(forecast.probabilityIncrease)
+        ? 'N/A'
+        : `${forecast.probabilityIncrease.toFixed(1)}%`,
       icon: 'target',
-      tone: getProbabilityTone(forecast.probabilityIncrease),
+      tone: classificationUnavailable ? 'neutral' : getProbabilityTone(forecast.probabilityIncrease),
     },
     {
-      label: 'Expected Return',
-      value: formatSignedPercent(forecast.expectedReturn),
+      label: `${forecast.configuration.returnHorizonLabel} Expected Return`,
+      value: regressionUnavailable ? 'N/A' : formatSignedPercent(forecast.expectedReturn),
       icon: 'market',
-      tone: forecast.expectedReturn > 0.2 ? 'positive' : forecast.expectedReturn < -0.2 ? 'negative' : 'neutral',
+      tone: regressionUnavailable ? 'neutral' : forecast.expectedReturn > 0.2 ? 'positive' : forecast.expectedReturn < -0.2 ? 'negative' : 'neutral',
     },
     {
-      label: 'Forecast Confidence',
-      value: forecast.confidence,
+      label: `${forecast.configuration.returnHorizonLabel} Predicted Price`,
+      value: regressionUnavailable ? 'N/A' : formatCurrency(forecast.expectedPrice),
+      icon: 'portfolio',
+      tone: regressionUnavailable ? 'neutral' : 'positive',
+    },
+    {
+      label: 'Direction Confidence',
+      value: classificationUnavailable ? 'N/A' : forecast.confidence,
       icon: 'shield',
-      tone: forecast.confidence === 'High' ? 'positive' : forecast.confidence === 'Low' ? 'negative' : 'warning',
+      tone: classificationUnavailable ? 'neutral' : forecast.confidence === 'High' ? 'positive' : forecast.confidence === 'Low' ? 'negative' : 'warning',
     },
   ]
 
@@ -55,6 +76,22 @@ export default function ForecastOverview({ forecast }) {
           </article>
         ))}
       </div>
+      {(classificationUnavailable || regressionUnavailable) && (
+        <div className="prediction-output-status-grid" aria-label="Prediction availability details">
+          {classificationUnavailable && (
+            <article className="prediction-output-status is-unavailable">
+              <strong>Direction Prediction Unavailable</strong>
+              <span>{forecast.classificationPredictionMessage}</span>
+            </article>
+          )}
+          {regressionUnavailable && (
+            <article className="prediction-output-status is-unavailable">
+              <strong>Return Prediction Unavailable</strong>
+              <span>{forecast.regressionPredictionMessage}</span>
+            </article>
+          )}
+        </div>
+      )}
     </section>
   )
 }

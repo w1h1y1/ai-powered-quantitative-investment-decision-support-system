@@ -1,253 +1,309 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  aiInsightDisclaimer,
-  aiInsightHistoryLimit,
-  aiInsightHistoryStorageKey,
-  defaultAIInsightConfig,
-  selectedAIInsightStorageKey,
-} from '../../data/aiInsightsMockData'
-import {
-  latestPredictionContextStorageKey,
-  latestPredictionContextUpdatedEvent,
-} from '../../data/predictionMockData'
-import {
-  createPredictionEvidenceFromContext,
-  generateMockAIInsight,
-  sanitizeAIInsightHistory,
-  sanitizePredictionContext,
-} from '../../services/aiInsightService'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Icon from '../Icon'
-import ConfidenceExplanation from './ConfidenceExplanation'
-import DecisionOverview from './DecisionOverview'
-import DecisionSummary from './DecisionSummary'
-import EvidenceBreakdown from './EvidenceBreakdown'
-import FactorLists from './FactorLists'
-import InsightConfiguration from './InsightConfiguration'
-import InsightHistory from './InsightHistory'
-import RecommendedNextSteps from './RecommendedNextSteps'
+import SecuritySearchSelect from '../security/SecuritySearchSelect'
+import { normalizeSecuritySearchOption } from '../security/securitySearchModel'
+import {
+  formatAnalysisEnumLabel,
+  formatRatioAsPercent,
+} from './aiInsightsFormatting'
+import { agentAnalysisApi } from '../../services/agentAnalysisApi'
+import { securityApi } from '../../services/securityApi'
 
-function readLatestPredictionContext() {
-  let storedPrediction
-
-  try {
-    storedPrediction = window.localStorage.getItem(latestPredictionContextStorageKey)
-  } catch (error) {
-    console.error('[AI Insights] Failed to read latestPredictionContext.', error)
-    return null
-  }
-
-  if (storedPrediction === null) return null
-
-  let parsedPrediction
-  try {
-    parsedPrediction = JSON.parse(storedPrediction)
-  } catch (error) {
-    console.warn('[AI Insights] latestPredictionContext contains invalid JSON.', error)
-    return null
-  }
-
-  const predictionContext = sanitizePredictionContext(parsedPrediction)
-  if (!predictionContext) {
-    console.warn('[AI Insights] latestPredictionContext is invalid: asset and predictedDirection are required.')
-  }
-  return predictionContext
+function SectionCard({ children, eyebrow, title }) {
+  return (
+    <section className="ai-insights-card" aria-labelledby={`ai-${title}`}>
+      <div className="ai-insights-card-heading">
+        <div>
+          <p>{eyebrow}</p>
+          <h2 id={`ai-${title}`}>{title}</h2>
+        </div>
+      </div>
+      {children}
+    </section>
+  )
 }
 
-function readStoredAIInsightState() {
-  let history = []
-
-  try {
-    const storedValue = window.localStorage.getItem(aiInsightHistoryStorageKey)
-    if (storedValue !== null) history = sanitizeAIInsightHistory(JSON.parse(storedValue))
-  } catch {
-    history = []
-  }
-
-  const latestPredictionContext = readLatestPredictionContext()
-
-  try {
-    const selectedInsightId = window.localStorage.getItem(selectedAIInsightStorageKey)
-    return {
-      history,
-      currentInsight: history.find((insight) => insight.id === selectedInsightId) ?? history[0] ?? null,
-      latestPredictionContext,
-    }
-  } catch {
-    return { history, currentInsight: history[0] ?? null, latestPredictionContext }
-  }
-}
-
-function EmptyInsightState() {
+export function EmptyState({ symbol }) {
   return (
     <section className="ai-insights-card ai-insights-empty-card" aria-labelledby="ai-insights-empty-title">
       <span className="ai-insights-empty-icon" aria-hidden="true">
         <Icon name="insights" />
       </span>
-      <h2 id="ai-insights-empty-title">No rule-based insight generated yet.</h2>
-      <p>Configure the analysis and generate an explainable decision-support summary.</p>
+      <h2 id="ai-insights-empty-title">No AI analysis generated yet.</h2>
+      <p>
+        {symbol
+          ? `Generate AI Analysis to review ${symbol} market, technical, portfolio, and backtest context.`
+          : 'Select an asset and generate an AI analysis to review market, technical, portfolio, and backtest context.'}
+      </p>
     </section>
   )
 }
 
-function LoadingInsightState() {
+export function LoadingState() {
   return (
     <section className="ai-insights-card ai-insights-empty-card" aria-live="polite" aria-busy="true">
       <i className="ai-insights-spinner is-large" aria-hidden="true" />
-      <h2>Generating Insight...</h2>
-      <p>Combining technical signals, portfolio exposure, backtest evidence and market context.</p>
+      <h2>Generating AI analysis...</h2>
+      <p>Building deterministic context and requesting a structured explanation.</p>
     </section>
   )
 }
 
-export default function AIInsightsContent({ onNavigate }) {
-  const [initialState] = useState(readStoredAIInsightState)
-  const [config, setConfig] = useState(() => ({
-    ...defaultAIInsightConfig,
-    ...(initialState.currentInsight?.configuration ?? {}),
-    includePrediction: Boolean(initialState.latestPredictionContext),
-  }))
-  const [history, setHistory] = useState(initialState.history)
-  const [currentInsight, setCurrentInsight] = useState(initialState.currentInsight)
-  const [latestPredictionContext, setLatestPredictionContext] = useState(initialState.latestPredictionContext)
+export function UnavailableState({ reason }) {
+  return (
+    <section className="ai-insights-card ai-insights-state-card" aria-live="polite">
+      <h2>AI analysis is currently unavailable.</h2>
+      <p>{reason || 'The analysis service could not produce a result.'}</p>
+    </section>
+  )
+}
+
+export function ErrorState({ message }) {
+  return (
+    <section className="ai-insights-card ai-insights-state-card" role="alert">
+      <h2>Unable to generate AI analysis.</h2>
+      <p>{message || 'Please try again.'}</p>
+    </section>
+  )
+}
+
+function Metric({ label, value }) {
+  return (
+    <div className="ai-insights-metric">
+      <span>{label}</span>
+      <strong>{value ?? '—'}</strong>
+    </div>
+  )
+}
+
+export function OverviewCard({ analysis, metadata }) {
+  return (
+    <SectionCard eyebrow="Summary" title="Analysis Overview">
+      <div className="ai-insights-overview-grid">
+        <Metric label="Asset" value={analysis.symbol} />
+        <Metric label="As of" value={metadata?.as_of_date ?? '—'} />
+        <Metric label="Market Regime" value={formatAnalysisEnumLabel(analysis.market_view?.regime)} />
+        <Metric label="Direction" value={analysis.market_view?.direction} />
+        <Metric label="Confirmation" value={analysis.market_context_view?.confirmation_level} />
+      </div>
+    </SectionCard>
+  )
+}
+
+export function MarketViewCard({ analysis }) {
+  return (
+    <SectionCard eyebrow="Regime" title="Market View">
+      <Metric label="Regime" value={formatAnalysisEnumLabel(analysis.market_view?.regime)} />
+      <Metric label="Direction" value={analysis.market_view?.direction} />
+      <p className="ai-insights-card-copy">{analysis.market_view?.summary}</p>
+    </SectionCard>
+  )
+}
+
+export function TechnicalViewCard({ analysis }) {
+  return (
+    <SectionCard eyebrow="Indicators" title="Technical Analysis">
+      <Metric label="Trend" value={analysis.technical_view?.trend} />
+      <Metric label="Momentum" value={analysis.technical_view?.momentum} />
+      <Metric label="Volatility" value={analysis.technical_view?.volatility} />
+    </SectionCard>
+  )
+}
+
+export function MarketContextCard({ analysis }) {
+  const context = analysis.market_context_view || {}
+  return (
+    <SectionCard eyebrow="Environment" title="Market Context">
+      <div className="ai-insights-context-line">
+        <span>Broad Market</span>
+        <p>{context.broad_market}</p>
+      </div>
+      <div className="ai-insights-context-line">
+        <span>Sector</span>
+        <p>{context.sector}</p>
+      </div>
+      <div className="ai-insights-context-line">
+        <span>Confirmation</span>
+        <p>
+          <strong>{context.confirmation_level}</strong>
+          <small>Score {context.confirmation_score}</small>
+        </p>
+      </div>
+      <p className="ai-insights-card-copy">{context.confirmation}</p>
+    </SectionCard>
+  )
+}
+
+export function PortfolioContextCard({ analysis }) {
+  const portfolio = analysis.portfolio_view || {}
+  return (
+    <SectionCard eyebrow="Position" title="Portfolio Context">
+      {portfolio.has_position ? (
+        <>
+          <Metric label="Current Position" value="Existing Position" />
+          <Metric label="Portfolio Weight" value={formatRatioAsPercent(portfolio.portfolio_weight)} />
+          <p className="ai-insights-card-copy">{portfolio.exposure_comment}</p>
+        </>
+      ) : (
+        <>
+          <Metric label="Current Position" value="No current position" />
+          <Metric label="Portfolio Weight" value="0.00%" />
+          <p className="ai-insights-card-copy">{portfolio.exposure_comment}</p>
+        </>
+      )}
+    </SectionCard>
+  )
+}
+
+export function BacktestEvidenceCard({ analysis }) {
+  const backtest = analysis.backtest_view || {}
+  if (!backtest.available) {
+    return (
+      <SectionCard eyebrow="Evidence" title="Historical Backtest Evidence">
+        <p className="ai-insights-card-copy">Backtest evidence unavailable</p>
+      </SectionCard>
+    )
+  }
+
+  return (
+    <SectionCard eyebrow="Evidence" title="Historical Backtest Evidence">
+      <p className="ai-insights-card-copy">{backtest.summary}</p>
+      <div className="ai-insights-list-block">
+        <h3>Strengths</h3>
+        <ul>
+          {(backtest.strengths || []).map((item) => <li key={item}>{item}</li>)}
+        </ul>
+      </div>
+      <div className="ai-insights-list-block">
+        <h3>Risks</h3>
+        <ul>
+          {(backtest.risks || []).map((item) => <li key={item}>{item}</li>)}
+        </ul>
+      </div>
+    </SectionCard>
+  )
+}
+
+export function OverallAssessmentCard({ analysis }) {
+  return (
+    <SectionCard eyebrow="Synthesis" title="Overall Assessment">
+      <p className="ai-insights-card-copy">{analysis.overall_assessment}</p>
+    </SectionCard>
+  )
+}
+
+export function RiskFactorsCard({ analysis }) {
+  return (
+    <SectionCard eyebrow="Risk" title="Risk Factors">
+      {analysis.risk_factors?.length ? (
+        <ul className="ai-insights-risk-list">
+          {analysis.risk_factors.map((item) => <li key={item}>{item}</li>)}
+        </ul>
+      ) : (
+        <p className="ai-insights-card-copy">No additional risk factors were returned.</p>
+      )}
+    </SectionCard>
+  )
+}
+
+export function MetadataFooter({ metadata }) {
+  return (
+    <footer className="ai-insights-metadata">
+      <span>
+        As of {metadata?.as_of_date || '—'} · {metadata?.provider === 'deepseek' ? 'DeepSeek' : metadata?.provider || '—'} · {metadata?.analysis_version || '—'}
+      </span>
+    </footer>
+  )
+}
+
+function getErrorMessage(error) {
+  return error?.message || 'Please try again.'
+}
+
+export default function AIInsightsContent() {
+  const [securities, setSecurities] = useState([])
+  const [isSecuritiesLoading, setIsSecuritiesLoading] = useState(true)
+  const [securitiesError, setSecuritiesError] = useState('')
+  const [selectedSymbol, setSelectedSymbol] = useState('')
+  const [analysis, setAnalysis] = useState(null)
+  const [analysisUnavailable, setAnalysisUnavailable] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const generateTimerRef = useRef(null)
-  const resultsRef = useRef(null)
-  const predictionContextSignatureRef = useRef(JSON.stringify(initialState.latestPredictionContext))
-
-  const refreshLatestPredictionContext = useCallback(() => {
-    const nextContext = readLatestPredictionContext()
-    const nextSignature = JSON.stringify(nextContext)
-
-    if (nextSignature !== predictionContextSignatureRef.current) {
-      predictionContextSignatureRef.current = nextSignature
-      setLatestPredictionContext(nextContext)
-      setConfig((current) => ({
-        ...current,
-        includePrediction: Boolean(nextContext),
-      }))
-    }
-
-    return nextContext
-  }, [])
+  const [error, setError] = useState('')
+  const requestIdRef = useRef(0)
 
   useEffect(() => {
-    const handleStorage = (event) => {
-      if (event.key === latestPredictionContextStorageKey) refreshLatestPredictionContext()
-    }
-
-    refreshLatestPredictionContext()
-    window.addEventListener('focus', refreshLatestPredictionContext)
-    window.addEventListener('storage', handleStorage)
-    window.addEventListener(latestPredictionContextUpdatedEvent, refreshLatestPredictionContext)
-
+    let ignore = false
+    securityApi.list()
+      .then((response) => {
+        if (ignore) return
+        const nextSecurities = (Array.isArray(response) ? response : [])
+          .filter((security) => security?.is_active !== false)
+          .map((security) => normalizeSecuritySearchOption(security))
+          .filter(Boolean)
+        setSecurities(nextSecurities)
+        const preferred = nextSecurities.find((item) => item.symbol === 'AAPL') ?? nextSecurities[0]
+        setSelectedSymbol(preferred?.symbol ?? '')
+      })
+      .catch((error) => {
+        if (ignore) return
+        setSecurities([])
+        setSecuritiesError(error?.message || 'Unable to load securities.')
+      })
+      .finally(() => {
+        if (!ignore) setIsSecuritiesLoading(false)
+      })
     return () => {
-      window.removeEventListener('focus', refreshLatestPredictionContext)
-      window.removeEventListener('storage', handleStorage)
-      window.removeEventListener(latestPredictionContextUpdatedEvent, refreshLatestPredictionContext)
+      ignore = true
     }
-  }, [refreshLatestPredictionContext])
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(aiInsightHistoryStorageKey, JSON.stringify(history))
-    } catch {
-      // React state remains the source of truth if browser storage is unavailable.
-    }
-  }, [history])
-
-  useEffect(() => {
-    try {
-      if (currentInsight) {
-        window.localStorage.setItem(selectedAIInsightStorageKey, currentInsight.id)
-      } else if (!isLoading) {
-        window.localStorage.removeItem(selectedAIInsightStorageKey)
-      }
-    } catch {
-      // The visible insight remains available even if browser storage is unavailable.
-    }
-  }, [currentInsight, isLoading])
-
-  useEffect(() => () => {
-    if (generateTimerRef.current) window.clearTimeout(generateTimerRef.current)
   }, [])
 
-  const scrollToResults = () => {
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      })
-    })
+  const selectedAsset = useMemo(
+    () => securities.find((item) => item.symbol === selectedSymbol) ?? null,
+    [securities, selectedSymbol],
+  )
+
+  const selectAsset = (asset) => {
+    const symbol = asset?.symbol ?? ''
+    setSelectedSymbol(symbol)
+    setAnalysis(null)
+    setAnalysisUnavailable('')
+    setError('')
+    requestIdRef.current += 1
   }
 
-  const updateConfig = (field, value) => {
-    if (field === 'includePrediction' && !latestPredictionContext) return
-    setConfig((current) => ({ ...current, [field]: value }))
-  }
-
-  const generateInsight = (event) => {
+  const generateAnalysis = (event) => {
     event.preventDefault()
-    if (generateTimerRef.current) window.clearTimeout(generateTimerRef.current)
+    const symbol = selectedSymbol
+    if (!symbol || isLoading) return
 
+    const requestId = requestIdRef.current + 1
+    requestIdRef.current = requestId
     setIsLoading(true)
-    setCurrentInsight(null)
+    setAnalysis(null)
+    setAnalysisUnavailable('')
+    setError('')
 
-    generateTimerRef.current = window.setTimeout(() => {
-      const nextInsight = generateMockAIInsight(config, new Date(), latestPredictionContext)
-      setCurrentInsight(nextInsight)
-      setHistory((current) => [
-        nextInsight,
-        ...current.filter((insight) => insight.id !== nextInsight.id),
-      ].slice(0, aiInsightHistoryLimit))
-      setIsLoading(false)
-      generateTimerRef.current = null
-      scrollToResults()
-    }, 650)
-  }
-
-  const reopenInsight = (insight) => {
-    if (generateTimerRef.current) window.clearTimeout(generateTimerRef.current)
-    generateTimerRef.current = null
-    setIsLoading(false)
-    setConfig({
-      ...defaultAIInsightConfig,
-      ...insight.configuration,
-      includePrediction: Boolean(latestPredictionContext && insight.configuration.includePrediction),
-    })
-    setCurrentInsight(insight)
-    scrollToResults()
-  }
-
-  const deleteInsight = (insightId) => {
-    const deletedIndex = history.findIndex((insight) => insight.id === insightId)
-    const nextHistory = history.filter((insight) => insight.id !== insightId)
-    setHistory(nextHistory)
-
-    if (currentInsight?.id !== insightId) return
-
-    const nextInsight = nextHistory[deletedIndex]
-      ?? nextHistory[deletedIndex - 1]
-      ?? nextHistory[0]
-      ?? null
-
-    setCurrentInsight(nextInsight)
-    if (nextInsight) {
-      setConfig({
-        ...defaultAIInsightConfig,
-        ...nextInsight.configuration,
-        includePrediction: Boolean(latestPredictionContext && nextInsight.configuration.includePrediction),
+    agentAnalysisApi.analyze({ symbol })
+      .then((response) => {
+        if (requestIdRef.current !== requestId || symbol !== selectedSymbol) return
+        if (response?.analysis_status === 'unavailable') {
+          setAnalysisUnavailable(response.unavailable_reason || 'AI analysis is currently unavailable.')
+          return
+        }
+        if (!response?.analysis) {
+          setError('The analysis response was empty.')
+          return
+        }
+        setAnalysis({ ...response.analysis, symbol, metadata: response.metadata })
       })
-    }
-    scrollToResults()
+      .catch((error) => {
+        if (requestIdRef.current !== requestId || symbol !== selectedSymbol) return
+        setError(getErrorMessage(error))
+      })
+      .finally(() => {
+        if (requestIdRef.current === requestId) setIsLoading(false)
+      })
   }
-
-  const livePredictionEvidence = latestPredictionContext
-    ? createPredictionEvidenceFromContext(config, latestPredictionContext)
-    : {
-        included: false,
-        status: 'unavailable',
-        metrics: [],
-        explanation: 'No forecast context is currently available.',
-      }
 
   return (
     <main className="main-content ai-insights-page-main">
@@ -255,61 +311,78 @@ export default function AIInsightsContent({ onNavigate }) {
         <div>
           <p>Decision support</p>
           <h2 id="ai-insights-page-title">AI Insights</h2>
-          <span>Explainable decision support based on technical signals, portfolio exposure, and strategy evidence.</span>
+          <span>AI-powered quantitative market analysis based on market regime, technical indicators, portfolio context, and historical backtest evidence.</span>
         </div>
-        <div className="demo-data-status" aria-label="Demo analysis status">
-          <strong>Demo Analysis</strong>
-          <span>Rule-based mock insight</span>
+        <div className="demo-data-status" aria-label="AI analysis status">
+          <strong>DeepSeek Analysis</strong>
+          <span>Structured decision-support</span>
         </div>
       </section>
 
-      <InsightConfiguration
-        config={config}
-        hasPredictionContext={Boolean(latestPredictionContext)}
-        isLoading={isLoading}
-        onChange={updateConfig}
-        onSubmit={generateInsight}
-      />
+      <section className="ai-insights-config-card" aria-labelledby="ai-insights-config-title">
+        <div className="ai-insights-config-heading">
+          <p>Configuration</p>
+          <h2 id="ai-insights-config-title">Analysis Setup</h2>
+        </div>
+        <div className="ai-insights-config-row">
+          <label className="ai-insights-field">
+            <span>Asset</span>
+            <SecuritySearchSelect
+              id="ai-insights-asset"
+              localSecurities={securities}
+              selectedSecurity={selectedAsset}
+              onSelect={selectAsset}
+              disabled={isSecuritiesLoading || isLoading}
+              clearSelectionOnEdit={false}
+            />
+            {selectedAsset && (
+              <div className="ai-insights-selected-asset">
+                <strong>{selectedAsset.symbol} — {selectedAsset.name}</strong>
+                <span>{selectedAsset.type}</span>
+              </div>
+            )}
+          </label>
+          <button
+            className="ai-insights-generate-button"
+            type="button"
+            disabled={!selectedSymbol || isLoading || isSecuritiesLoading}
+            onClick={generateAnalysis}
+          >
+            {isLoading ? 'Analyzing...' : 'Generate AI Analysis'}
+          </button>
+        </div>
+        {securitiesError && <p className="ai-insights-config-error" role="alert">{securitiesError}</p>}
+      </section>
 
-      <div className="ai-insights-result-region" ref={resultsRef}>
+      <div className="ai-insights-result-region">
         {isLoading ? (
-          <LoadingInsightState />
-        ) : currentInsight ? (
+          <LoadingState />
+        ) : analysisUnavailable ? (
+          <UnavailableState reason={analysisUnavailable} />
+        ) : error ? (
+          <ErrorState message={error} />
+        ) : analysis ? (
           <>
-            <DecisionOverview insight={currentInsight} />
-            <DecisionSummary insight={currentInsight} />
-            <EvidenceBreakdown
-              insight={currentInsight}
-              predictionEvidenceOverride={livePredictionEvidence}
-              onAnalysePredictionAsset={(symbol) => updateConfig('symbol', symbol)}
-            />
-            <FactorLists
-              supportingFactors={currentInsight.supportingFactors}
-              riskFactors={currentInsight.riskFactors}
-            />
-            <RecommendedNextSteps
-              insight={currentInsight}
-              steps={currentInsight.recommendedNextSteps}
-              onNavigate={onNavigate}
-            />
-            <ConfidenceExplanation explanation={currentInsight.confidenceExplanation} />
+            <OverviewCard analysis={analysis} metadata={analysis.metadata} />
+            <div className="ai-insights-analysis-grid">
+              <MarketViewCard analysis={analysis} />
+              <TechnicalViewCard analysis={analysis} />
+              <MarketContextCard analysis={analysis} />
+              <PortfolioContextCard analysis={analysis} />
+              <BacktestEvidenceCard analysis={analysis} />
+              <RiskFactorsCard analysis={analysis} />
+            </div>
+            <OverallAssessmentCard analysis={analysis} />
+            <MetadataFooter metadata={analysis.metadata} />
+            <aside className="ai-insights-disclaimer" aria-label="AI analysis risk disclosure">
+              <Icon name="shield" />
+              <span>AI-generated decision support based on available system data. Historical performance does not guarantee future results.</span>
+            </aside>
           </>
         ) : (
-          <EmptyInsightState />
+          <EmptyState symbol={selectedSymbol} />
         )}
-
-        <aside className="ai-insights-disclaimer" aria-label="Rule-based insight risk disclosure">
-          <Icon name="shield" />
-          <span>{currentInsight?.disclaimer ?? aiInsightDisclaimer}</span>
-        </aside>
       </div>
-
-      <InsightHistory
-        history={history}
-        currentInsightId={currentInsight?.id}
-        onReopen={reopenInsight}
-        onDelete={deleteInsight}
-      />
     </main>
   )
 }

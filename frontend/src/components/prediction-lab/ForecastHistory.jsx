@@ -40,7 +40,7 @@ export default function ForecastHistory({ history, currentForecastId, onOpen, on
         <div>
           <p>Saved forecasts</p>
           <h2 id="prediction-history-title">Forecast History</h2>
-          <span>Open or delete deterministic mock forecasts stored in this browser.</span>
+          <span>Prediction history will be available after a real prediction model is implemented.</span>
         </div>
         <strong className="prediction-record-count">{history.length} saved</strong>
       </div>
@@ -52,7 +52,8 @@ export default function ForecastHistory({ history, currentForecastId, onOpen, on
             <thead>
               <tr>
                 <th scope="col">Asset</th>
-                <th scope="col">Horizon</th>
+                <th scope="col">Direction Horizon</th>
+                <th scope="col">Return Horizon</th>
                 <th scope="col">Direction</th>
                 <th scope="col">Probability</th>
                 <th scope="col">Expected Return</th>
@@ -71,7 +72,8 @@ export default function ForecastHistory({ history, currentForecastId, onOpen, on
                         <small>{forecast.asset.type}</small>
                       </span>
                     </td>
-                    <td data-label="Horizon">{forecast.configuration.horizonLabel}</td>
+                    <td data-label="Direction Horizon">{forecast.configuration.directionHorizonLabel}</td>
+                    <td data-label="Return Horizon">{forecast.configuration.returnHorizonLabel}</td>
                     <td data-label="Direction">{forecast.predictedDirection}</td>
                     <td data-label="Probability">{forecast.probabilityIncrease}%</td>
                     <td data-label="Expected Return">{formatSignedPercent(forecast.expectedReturn)}</td>
@@ -98,7 +100,7 @@ export default function ForecastHistory({ history, currentForecastId, onOpen, on
       ) : (
         <div className="prediction-history-empty">
           <strong>No saved forecasts yet.</strong>
-          <span>Generated forecasts will remain available after refresh.</span>
+          <span>No real model predictions have been generated yet.</span>
         </div>
       )}
 

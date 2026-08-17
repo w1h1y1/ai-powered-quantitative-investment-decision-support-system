@@ -5,7 +5,6 @@ export const navigationItems = [
   { id: 'portfolio', label: 'Portfolio', icon: 'portfolio' },
   { id: 'strategy-backtesting', label: 'Strategy Backtest', icon: 'strategy', path: '/backtest' },
   { id: 'ai-insights', label: 'AI Insights', icon: 'insights', path: '/ai-insights' },
-  { id: 'prediction-lab', label: 'Prediction Lab', icon: 'prediction', path: '/prediction-lab' },
 ]
 
 export const workspaceContent = {
@@ -45,12 +44,6 @@ export const workspaceContent = {
     title: 'AI-assisted insights will live here',
     description: 'Mock research summaries, signals and explainable investment insights will be presented here.',
     icon: 'insights',
-  },
-  'prediction-lab': {
-    eyebrow: 'Prediction lab',
-    title: 'Probabilistic forecasts will live here',
-    description: 'Mock model comparisons, price ranges and scenario simulations will be presented here.',
-    icon: 'prediction',
   },
 }
 

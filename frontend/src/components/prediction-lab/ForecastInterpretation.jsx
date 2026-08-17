@@ -1,26 +1,30 @@
 import Icon from '../Icon'
 
 export default function ForecastInterpretation({ forecast, onOpenInAIInsights, onNavigate, onOpenMarketAnalysis }) {
-  const interpretation = forecast.interpretation
-    .replace(`${forecast.selectedModel} produces`, 'This deterministic mock forecast indicates')
-    .replace('Model outputs or simulated validation performance', 'Underlying forecast signals')
-    .replace('model agreement', 'forecast consistency')
-
+  if (!forecast.predictionAvailable) {
+    return (
+      <section className="prediction-card prediction-interpretation-card" aria-labelledby="prediction-interpretation-title">
+        <div className="prediction-card-header"><div><p>Prediction status</p><h2 id="prediction-interpretation-title">Forecast Interpretation</h2><span>Real market data is available, but the selected window does not support reliable model training.</span></div></div>
+        <p>{forecast.predictionMessage}</p>
+        <div className="prediction-action-layout"><div><strong>Continue the research workflow</strong><span>Review the loaded market data in Market Analysis. AI Insights is not given a placeholder prediction.</span></div><div className="prediction-actions"><button type="button" onClick={onOpenMarketAnalysis}><Icon name="market" />View Market Analysis</button><button type="button" onClick={() => onNavigate('strategy-backtesting')}><Icon name="strategy" />Review Backtest</button></div></div>
+      </section>
+    )
+  }
   return (
     <section className="prediction-card prediction-interpretation-card" aria-labelledby="prediction-interpretation-title">
       <div className="prediction-card-header">
         <div>
-          <p>Rule-based explanation</p>
+          <p>Model-based explanation</p>
           <h2 id="prediction-interpretation-title">Forecast Interpretation</h2>
-          <span>Template-generated context for the selected asset and forecast settings.</span>
+          <span>Summary of the real classification and regression outputs for the selected settings.</span>
         </div>
       </div>
-      <p>{interpretation}</p>
+      <p>{forecast.interpretation}</p>
 
       <div className="prediction-action-layout">
         <div>
           <strong>Continue the research workflow</strong>
-          <span>Review the latest forecast alongside rule-based decision-support evidence.</span>
+          <span>Review the model estimate alongside market data and backtest evidence.</span>
         </div>
         <div className="prediction-actions" aria-label="Forecast navigation actions">
           <button type="button" className="is-primary" onClick={onOpenInAIInsights}>

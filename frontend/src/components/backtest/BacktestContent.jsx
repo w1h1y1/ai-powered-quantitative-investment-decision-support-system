@@ -5,31 +5,21 @@ import {
   backtestHistoryStorageKey,
   backtestStrategies,
   buildBacktestFailureState,
+  createDefaultBacktestConfig,
   createBacktestRunRequest,
-  defaultBacktestConfig,
   legacySelectedBacktestStorageKey,
   normalizeBacktestResult,
+  sanitizeBacktestBenchmarkSymbol,
   sanitizeBacktestHistory,
   selectedBacktestStorageKey,
   validateBacktestConfig,
 } from '../../data/backtestData'
 import { backtestApi } from '../../services/backtestApi'
 import { securityApi } from '../../services/securityApi'
+import { normalizeSecuritySearchOption } from '../security/securitySearchModel'
 import BacktestConfiguration from './BacktestConfiguration'
 import BacktestHistory from './BacktestHistory'
 import BacktestResults from './BacktestResults'
-
-function normalizeSecurityAsset(security) {
-  return {
-    id: security.id,
-    symbol: security.symbol,
-    asset: security.name,
-    name: security.name,
-    type: security.asset_type === 'ETF' ? 'ETF' : 'Stock',
-    exchange: security.exchange,
-    currency: security.currency,
-  }
-}
 
 function readStoredHistory() {
   try {
@@ -61,16 +51,23 @@ export default function BacktestContent() {
   const [isAssetsLoading, setIsAssetsLoading] = useState(true)
   const [assetsError, setAssetsError] = useState('')
   const [initialBacktestState] = useState(() => readStoredBacktestState())
-  const [config, setConfig] = useState(() => ({ ...defaultBacktestConfig }))
+  const [config, setConfig] = useState(() => createDefaultBacktestConfig())
   const [history, setHistory] = useState(initialBacktestState.history)
   const [currentResult, setCurrentResult] = useState(initialBacktestState.currentResult)
+  const [selectedAssetOverride, setSelectedAssetOverride] = useState(
+    () => normalizeSecuritySearchOption(initialBacktestState.currentResult?.asset),
+  )
   const [isLoading, setIsLoading] = useState(false)
   const [runError, setRunError] = useState(null)
-  const resultsRef = useRef(null)
+  const [sectorContext, setSectorContext] = useState(null)
+  const sectorContextRequestIdRef = useRef(0)
 
   const selectedAsset = useMemo(
-    () => assets.find((asset) => asset.symbol === config.symbol) ?? null,
-    [assets, config.symbol],
+    () => (
+      assets.find((asset) => asset.symbol === config.symbol)
+      ?? (selectedAssetOverride?.symbol === config.symbol ? selectedAssetOverride : null)
+    ),
+    [assets, config.symbol, selectedAssetOverride],
   )
   const selectedBenchmark = useMemo(
     () => assets.find((asset) => asset.symbol === config.benchmarkSymbol) ?? null,
@@ -80,6 +77,15 @@ export default function BacktestContent() {
     () => backtestStrategies.find((strategy) => strategy.id === config.strategyId) ?? backtestStrategies[0],
     [config.strategyId],
   )
+  const availableBenchmarkSymbols = useMemo(() => {
+    const allowed = (
+      Array.isArray(sectorContext?.allowed_benchmarks)
+      && sectorContext.allowed_benchmarks.length
+    )
+      ? sectorContext.allowed_benchmarks
+      : ['SPY']
+    return allowed.filter((symbol) => assets.some((asset) => asset.symbol === symbol))
+  }, [assets, sectorContext])
   const errors = useMemo(() => {
     const validationErrors = validateBacktestConfig(config)
     if (assetsError) validationErrors.symbol = assetsError
@@ -89,8 +95,23 @@ export default function BacktestContent() {
     if (!isAssetsLoading && assets.length && !selectedBenchmark) {
       validationErrors.benchmarkSymbol = 'The selected benchmark is not available.'
     }
+    if (
+      selectedAsset
+      && availableBenchmarkSymbols.length
+      && !availableBenchmarkSymbols.includes(config.benchmarkSymbol)
+    ) {
+      validationErrors.benchmarkSymbol = 'The selected benchmark is not valid for the selected asset.'
+    }
     return validationErrors
-  }, [assets.length, assetsError, config, isAssetsLoading, selectedBenchmark])
+  }, [
+    assets.length,
+    assetsError,
+    availableBenchmarkSymbols,
+    config,
+    isAssetsLoading,
+    selectedAsset,
+    selectedBenchmark,
+  ])
 
   useEffect(() => {
     let ignore = false
@@ -102,7 +123,8 @@ export default function BacktestContent() {
         if (ignore) return
         const nextAssets = (Array.isArray(response) ? response : [])
           .filter((security) => security?.is_active !== false)
-          .map(normalizeSecurityAsset)
+          .map((security) => normalizeSecuritySearchOption(security))
+          .filter(Boolean)
         setAssets(nextAssets)
       })
       .catch((error) => {
@@ -125,13 +147,50 @@ export default function BacktestContent() {
       const nextSymbol = assets.some((asset) => asset.symbol === current.symbol)
         ? current.symbol
         : assets[0].symbol
-      const nextBenchmark = assets.some((asset) => asset.symbol === current.benchmarkSymbol)
-        ? current.benchmarkSymbol
-        : (assets.find((asset) => asset.symbol === 'SPY')?.symbol ?? assets[0].symbol)
+      const nextBenchmark = sanitizeBacktestBenchmarkSymbol(
+        current.benchmarkSymbol,
+        assets.map((asset) => asset.symbol),
+      )
       if (nextSymbol === current.symbol && nextBenchmark === current.benchmarkSymbol) return current
       return { ...current, symbol: nextSymbol, benchmarkSymbol: nextBenchmark }
     })
   }, [assets])
+
+  useEffect(() => {
+    setSectorContext(null)
+    if (!selectedAsset?.id) return undefined
+
+    const requestId = sectorContextRequestIdRef.current + 1
+    sectorContextRequestIdRef.current = requestId
+    let ignore = false
+
+    securityApi.sectorContext({ securityId: selectedAsset.id })
+      .then((payload) => {
+        if (!ignore && sectorContextRequestIdRef.current === requestId) {
+          setSectorContext(payload)
+        }
+      })
+      .catch(() => {
+        if (!ignore && sectorContextRequestIdRef.current === requestId) {
+          setSectorContext(null)
+        }
+      })
+
+    return () => {
+      ignore = true
+    }
+  }, [selectedAsset?.id])
+
+  useEffect(() => {
+    if (!selectedAsset?.id || !availableBenchmarkSymbols.length) return
+    const nextBenchmark = sanitizeBacktestBenchmarkSymbol(
+      config.benchmarkSymbol,
+      availableBenchmarkSymbols,
+    )
+    if (nextBenchmark !== config.benchmarkSymbol) {
+      setConfig((current) => ({ ...current, benchmarkSymbol: nextBenchmark }))
+    }
+  }, [availableBenchmarkSymbols, config.benchmarkSymbol, selectedAsset?.id])
 
   useEffect(() => {
     try {
@@ -155,16 +214,13 @@ export default function BacktestContent() {
     }
   }, [currentResult, isLoading])
 
-  const scrollToResults = () => {
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      })
-    })
-  }
-
   const updateConfig = (field, value) => {
     setConfig((current) => ({ ...current, [field]: value }))
+  }
+
+  const selectAsset = (asset) => {
+    setSelectedAssetOverride(asset)
+    setConfig((current) => ({ ...current, symbol: asset?.symbol ?? '' }))
   }
 
   const executeBacktest = async (request) => {
@@ -175,12 +231,12 @@ export default function BacktestContent() {
     try {
       const response = await backtestApi.run(request.payload)
       const result = normalizeBacktestResult(response, request.config)
+      setSelectedAssetOverride(normalizeSecuritySearchOption(result.asset))
       setCurrentResult(result)
       setHistory((current) => [
         result,
         ...current.filter((item) => item.id !== result.id),
       ].slice(0, backtestHistoryLimit))
-      scrollToResults()
     } catch (error) {
       const failure = buildBacktestFailureState(request, error)
       setCurrentResult(failure.currentResult)
@@ -204,9 +260,9 @@ export default function BacktestContent() {
   const reopenResult = (result) => {
     setIsLoading(false)
     setRunError(null)
-    setConfig({ ...defaultBacktestConfig, ...result.config })
+    setConfig({ ...createDefaultBacktestConfig(), ...result.config })
+    setSelectedAssetOverride(normalizeSecuritySearchOption(result.asset))
     setCurrentResult(result)
-    scrollToResults()
   }
 
   const deleteResult = (resultId) => {
@@ -222,8 +278,12 @@ export default function BacktestContent() {
       ?? null
 
     setCurrentResult(nextResult)
-    if (nextResult) setConfig({ ...defaultBacktestConfig, ...nextResult.config })
-    scrollToResults()
+    if (nextResult) {
+      setConfig({ ...createDefaultBacktestConfig(), ...nextResult.config })
+      setSelectedAssetOverride(normalizeSecuritySearchOption(nextResult.asset))
+    } else {
+      setSelectedAssetOverride(null)
+    }
   }
 
   return (
@@ -235,6 +295,7 @@ export default function BacktestContent() {
 
       <BacktestConfiguration
         assets={assets}
+        allowedBenchmarks={availableBenchmarkSymbols}
         strategies={backtestStrategies}
         selectedAsset={selectedAsset}
         selectedBenchmark={selectedBenchmark}
@@ -244,6 +305,7 @@ export default function BacktestContent() {
         isAssetsLoading={isAssetsLoading}
         isLoading={isLoading}
         onChange={updateConfig}
+        onSelectAsset={selectAsset}
         onSubmit={runBacktest}
       />
 
@@ -272,7 +334,7 @@ export default function BacktestContent() {
         </section>
       )}
 
-      <div className="backtest-result-region" ref={resultsRef}>
+      <div className="backtest-result-region">
         {isLoading ? (
           <section className="backtest-card backtest-state-card" aria-live="polite" aria-busy="true">
             <i className="backtest-loading-spinner is-large" aria-hidden="true" />

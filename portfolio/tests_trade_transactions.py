@@ -1,4 +1,5 @@
 from datetime import date, datetime, time, timedelta
+from datetime import timezone as dt_timezone
 from decimal import Decimal
 from importlib import import_module
 from unittest.mock import patch
@@ -498,6 +499,126 @@ class TradeTransactionApiTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('start_date', response.data)
+
+    def test_transaction_list_today_includes_local_day_transaction_from_previous_utc_day(self):
+        """Aug 16 21:00 UTC is Aug 17 05:00 in Asia/Shanghai."""
+        transaction = TradeTransaction.objects.create(
+            portfolio=self.portfolio_a,
+            security=self.security_a,
+            transaction_type=TradeTransaction.TransactionType.BUY,
+            quantity=Decimal('1.000000'),
+            price=Decimal('100.0000'),
+            fee=Decimal('0.00'),
+            transaction_date=datetime(2026, 8, 16, 21, 0, tzinfo=dt_timezone.utc),
+        )
+        self.authenticate_as(self.user_a)
+
+        response = self.client.get(reverse('transaction-list'), {
+            'start_date': '2026-08-17',
+            'end_date': '2026-08-17',
+            'timezone': 'Asia/Shanghai',
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(self.transaction_result_ids(response), [transaction.id])
+
+        utc_response = self.client.get(reverse('transaction-list'), {
+            'start_date': '2026-08-17',
+            'end_date': '2026-08-17',
+            'timezone': 'UTC',
+        })
+        self.assertEqual(utc_response.data['count'], 0)
+
+    def test_transaction_list_today_excludes_previous_local_day_transaction(self):
+        """Aug 16 06:00 UTC is Aug 16 14:00 in Asia/Shanghai, not Aug 17."""
+        TradeTransaction.objects.create(
+            portfolio=self.portfolio_a,
+            security=self.security_a,
+            transaction_type=TradeTransaction.TransactionType.BUY,
+            quantity=Decimal('1.000000'),
+            price=Decimal('100.0000'),
+            fee=Decimal('0.00'),
+            transaction_date=datetime(2026, 8, 16, 6, 0, tzinfo=dt_timezone.utc),
+        )
+        self.authenticate_as(self.user_a)
+
+        response = self.client.get(reverse('transaction-list'), {
+            'start_date': '2026-08-17',
+            'end_date': '2026-08-17',
+            'timezone': 'Asia/Shanghai',
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 0)
+
+    def test_transaction_list_today_includes_normal_daytime_transaction(self):
+        """Aug 17 04:00 UTC is Aug 17 12:00 in Asia/Shanghai."""
+        transaction = TradeTransaction.objects.create(
+            portfolio=self.portfolio_a,
+            security=self.security_a,
+            transaction_type=TradeTransaction.TransactionType.BUY,
+            quantity=Decimal('1.000000'),
+            price=Decimal('100.0000'),
+            fee=Decimal('0.00'),
+            transaction_date=datetime(2026, 8, 17, 4, 0, tzinfo=dt_timezone.utc),
+        )
+        self.authenticate_as(self.user_a)
+
+        response = self.client.get(reverse('transaction-list'), {
+            'start_date': '2026-08-17',
+            'end_date': '2026-08-17',
+            'timezone': 'Asia/Shanghai',
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(self.transaction_result_ids(response), [transaction.id])
+
+    def test_transaction_list_seven_days_uses_client_timezone_boundary(self):
+        """7D window is computed in the client timezone, not UTC."""
+        local_today_tx = TradeTransaction.objects.create(
+            portfolio=self.portfolio_a,
+            security=self.security_a,
+            transaction_type=TradeTransaction.TransactionType.BUY,
+            quantity=Decimal('1.000000'),
+            price=Decimal('100.0000'),
+            fee=Decimal('0.00'),
+            transaction_date=datetime(2026, 8, 16, 21, 0, tzinfo=dt_timezone.utc),
+        )
+        outside_window_tx = TradeTransaction.objects.create(
+            portfolio=self.portfolio_a,
+            security=self.security_a,
+            transaction_type=TradeTransaction.TransactionType.BUY,
+            quantity=Decimal('1.000000'),
+            price=Decimal('100.0000'),
+            fee=Decimal('0.00'),
+            transaction_date=datetime(2026, 8, 10, 15, 59, tzinfo=dt_timezone.utc),
+        )
+        self.authenticate_as(self.user_a)
+
+        response = self.client.get(reverse('transaction-list'), {
+            'start_date': '2026-08-11',
+            'end_date': '2026-08-17',
+            'timezone': 'Asia/Shanghai',
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(self.transaction_result_ids(response), [local_today_tx.id])
+        self.assertNotIn(outside_window_tx.id, self.transaction_result_ids(response))
+
+    def test_transaction_list_invalid_timezone_returns_400(self):
+        self.authenticate_as(self.user_a)
+
+        response = self.client.get(reverse('transaction-list'), {
+            'start_date': '2026-08-17',
+            'end_date': '2026-08-17',
+            'timezone': 'Mars/Olympus',
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('timezone', response.data)
 
     @override_settings(DEBUG=False)
     def test_ordinary_user_cannot_use_test_undo_or_reset_in_production(self):

@@ -1,4 +1,6 @@
 import StrategyParameters from './StrategyParameters'
+import SecuritySearchSelect from '../security/SecuritySearchSelect'
+import { filterBacktestBenchmarkOptions } from '../../data/backtestData'
 
 function FieldError({ id, message }) {
   if (!message) return null
@@ -7,6 +9,7 @@ function FieldError({ id, message }) {
 
 export default function BacktestConfiguration({
   assets,
+  allowedBenchmarks,
   strategies,
   selectedAsset,
   selectedBenchmark,
@@ -16,11 +19,13 @@ export default function BacktestConfiguration({
   isAssetsLoading,
   isLoading,
   onChange,
+  onSelectAsset,
   onSubmit,
 }) {
   const isInvalid = Object.keys(errors).length > 0
   const startDateError = errors.startDate ?? errors.dateRange
   const controlsDisabled = isLoading || isAssetsLoading
+  const benchmarkOptions = filterBacktestBenchmarkOptions(allowedBenchmarks, assets)
 
   return (
     <section className="backtest-card backtest-config-card" aria-labelledby="backtest-config-title">
@@ -38,30 +43,24 @@ export default function BacktestConfiguration({
 
       <form className="backtest-config-form" onSubmit={onSubmit} noValidate>
         <div className="backtest-config-grid">
-          <label className="backtest-field is-asset" htmlFor="backtest-asset">
-            <span>Asset</span>
+          <div className="backtest-field is-asset">
+            <label htmlFor="backtest-asset"><span>Asset</span></label>
             <div className="backtest-asset-control">
-              <select
+              <SecuritySearchSelect
                 id="backtest-asset"
-                value={config.symbol}
-                onChange={(event) => onChange('symbol', event.target.value)}
+                localSecurities={assets}
+                selectedSecurity={selectedAsset}
+                onSelect={onSelectAsset}
                 disabled={controlsDisabled}
-                aria-invalid={Boolean(errors.symbol)}
-                aria-describedby={errors.symbol ? 'backtest-asset-error' : undefined}
-              >
-                {isAssetsLoading && <option value={config.symbol}>Loading securities...</option>}
-                {assets.map((asset) => (
-                  <option value={asset.symbol} key={asset.symbol}>
-                    {asset.symbol} - {asset.asset}
-                  </option>
-                ))}
-              </select>
+                invalid={Boolean(errors.symbol)}
+                describedBy={errors.symbol ? 'backtest-asset-error' : undefined}
+              />
               <strong className={`backtest-asset-type is-${selectedAsset?.type.toLowerCase() ?? 'stock'}`}>
-                {selectedAsset?.type ?? 'Stock'}
+                {selectedAsset?.type ?? 'Asset'}
               </strong>
             </div>
             <FieldError id="backtest-asset-error" message={errors.symbol} />
-          </label>
+          </div>
 
           <label className="backtest-field is-benchmark" htmlFor="backtest-benchmark">
             <span>Market benchmark</span>
@@ -74,36 +73,33 @@ export default function BacktestConfiguration({
                 aria-invalid={Boolean(errors.benchmarkSymbol)}
                 aria-describedby={errors.benchmarkSymbol ? 'backtest-benchmark-error' : undefined}
               >
-                {isAssetsLoading && <option value={config.benchmarkSymbol}>Loading securities...</option>}
-                {assets.map((asset) => (
-                  <option value={asset.symbol} key={asset.symbol}>
-                    {asset.symbol} - {asset.asset}
+                {benchmarkOptions.length === 0 && (
+                  <option value={config.benchmarkSymbol}>{config.benchmarkSymbol}</option>
+                )}
+                {benchmarkOptions.map((option) => (
+                  <option value={option.symbol} key={option.symbol}>
+                    {option.symbol} — {option.name}
                   </option>
                 ))}
               </select>
-              <strong className={`backtest-asset-type is-${selectedBenchmark?.type.toLowerCase() ?? 'etf'}`}>
-                {selectedBenchmark?.type ?? 'ETF'}
-              </strong>
+              <strong className="backtest-asset-type is-etf">ETF</strong>
             </div>
+            <small className="backtest-benchmark-fixed-note">
+              Used for market-regime detection; not traded by the strategy.
+            </small>
             <FieldError id="backtest-benchmark-error" message={errors.benchmarkSymbol} />
           </label>
 
-          <label className="backtest-field is-strategy" htmlFor="backtest-strategy">
+          <div className="backtest-field is-strategy" id="backtest-strategy">
             <span>Strategy</span>
-            <select
-              id="backtest-strategy"
-              value={config.strategyId}
-              onChange={(event) => onChange('strategyId', event.target.value)}
-              disabled={controlsDisabled}
-              aria-invalid={Boolean(errors.strategyId)}
-              aria-describedby={errors.strategyId ? 'backtest-strategy-error' : undefined}
-            >
-              {strategies.map((strategy) => (
-                <option value={strategy.id} key={strategy.id}>{strategy.label}</option>
-              ))}
-            </select>
+            <strong className="backtest-strategy-fixed">
+              {selectedStrategy?.label ?? 'Market-Regime Hybrid Strategy (Core + Swing)'}
+            </strong>
+            <small className="backtest-strategy-fixed-note">
+              {selectedStrategy?.description ?? 'Regime-aware Core trend following with pullback-based Swing trading.'}
+            </small>
             <FieldError id="backtest-strategy-error" message={errors.strategyId} />
-          </label>
+          </div>
 
           <label className="backtest-field" htmlFor="backtest-start-date">
             <span>Start date</span>

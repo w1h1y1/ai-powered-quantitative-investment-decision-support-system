@@ -17,6 +17,9 @@ export default function StrategyParameters({ strategy, config, errors, disabled,
           return (
             <label className="backtest-field" htmlFor={inputId} key={parameter.key}>
               <span>{parameter.label}</span>
+              {parameter.description && (
+                <small className="backtest-parameter-description">{parameter.description}</small>
+              )}
               {parameter.type === 'select' ? (
                 <select
                   id={inputId}

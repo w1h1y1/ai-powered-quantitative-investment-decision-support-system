@@ -32,6 +32,12 @@ function formatCompactNumber(value, minimumFractionDigits = 0) {
   })
 }
 
+function formatReasonCounts(reasonCounts) {
+  const entries = Object.entries(reasonCounts || {})
+  if (!entries.length) return 'None'
+  return entries.map(([reason, count]) => `${reason} × ${count}`).join(', ')
+}
+
 export default function BacktestResults({ result }) {
   const metrics = [
     {
@@ -75,7 +81,7 @@ export default function BacktestResults({ result }) {
   const parameters = result.parametersUsed || {}
   const parametersUsed = [
     ['Asset', result.asset?.symbol || 'N/A'],
-    ['Benchmark', result.benchmark?.symbol || 'N/A'],
+    ['Benchmark', result.benchmark?.symbol || result.config?.benchmarkSymbol || 'SPY'],
     [
       'Date Range',
       dataSource.requested_start_date && dataSource.requested_end_date
@@ -87,13 +93,13 @@ export default function BacktestResults({ result }) {
     ['Core Risk', `${formatCompactNumber(parameters.coreRiskPercent)}%`],
     ['Core ATR', formatCompactNumber(parameters.coreAtrMultiplier, 1)],
     ['Max Core Exposure', `${formatCompactNumber(parameters.maxCoreExposurePercent)}%`],
+    ['Core Reduce Fraction', `${formatCompactNumber(parameters.coreReduceFractionPercent)}%`],
     ['Swing Risk', `${formatCompactNumber(parameters.swingRiskPercent)}%`],
     ['Swing ATR', formatCompactNumber(parameters.swingAtrMultiplier, 1)],
     ['RSI Lookback', formatCompactNumber(parameters.swingRsiLookback)],
     ['RSI Entry', formatCompactNumber(parameters.swingRsiEntryLevel)],
     ['RSI Exit', formatCompactNumber(parameters.swingRsiExitLevel)],
     ['Swing Average', parameters.swingAverageType || 'EMA10'],
-    ['Cooldown', `${formatCompactNumber(parameters.swingCooldownDays)} days`],
   ]
 
   return (
@@ -142,18 +148,32 @@ export default function BacktestResults({ result }) {
             <LayerMetric label="Realized P/L" value={formatCurrency(result.coreMetrics.realizedProfitLoss)} tone={getTone(result.coreMetrics.realizedProfitLoss)} />
             <LayerMetric label="Unrealized P/L" value={formatCurrency(result.coreMetrics.unrealizedProfitLoss)} tone={getTone(result.coreMetrics.unrealizedProfitLoss)} />
             <LayerMetric label="Holding Days" value={String(result.coreMetrics.holdingDays)} />
-            <LayerMetric label="Entries" value={String(result.coreMetrics.entryCount)} />
-            <LayerMetric label="Exits" value={String(result.coreMetrics.exitCount)} />
+            <LayerMetric label="Core BUY" value={String(result.coreMetrics.entryCount)} />
+            <LayerMetric label="Core ADD" value={String(result.coreMetrics.addCount)} />
+            <LayerMetric label="Core REDUCE" value={String(result.coreMetrics.reduceCount)} />
+            <LayerMetric label="Core FULL EXIT" value={String(result.coreMetrics.fullExitCount)} />
+            <LayerMetric label="Avg Holding Period" value={`${formatCompactNumber(result.coreMetrics.averageHoldingPeriod)} days`} />
+            <LayerMetric label="Median Holding Period" value={`${formatCompactNumber(result.coreMetrics.medianHoldingPeriod)} days`} />
+            <LayerMetric label="Average Exposure" value={`${formatCompactNumber(result.coreMetrics.averageExposure)}%`} />
+            <LayerMetric label="Max Exposure" value={`${formatCompactNumber(result.coreMetrics.maxExposure)}%`} />
+            <LayerMetric label="Avg Full Exit → BUY Gap" value={`${formatCompactNumber(result.coreMetrics.fullExitToNextBuyAverageGap)} days`} />
+            <LayerMetric label="Min Full Exit → BUY Gap" value={`${formatCompactNumber(result.coreMetrics.fullExitToNextBuyMinimumGap)} days`} />
+            <LayerMetric label="Full Exit Reasons" value={formatReasonCounts(result.coreStrategyDiagnostics.full_exit_reasons)} />
+            <LayerMetric label="Reduce Reasons" value={formatReasonCounts(result.coreStrategyDiagnostics.reduce_reasons)} />
+            <LayerMetric label="Re-entry Reasons" value={formatReasonCounts(result.coreStrategyDiagnostics.reentry_reasons)} />
           </section>
           <section className="backtest-layer-column is-swing" aria-label="Swing position metrics">
             <h3>Swing Trading</h3>
             <LayerMetric label="Return Contribution" value={formatSignedPercentage(result.swingMetrics.returnContribution)} tone={getTone(result.swingMetrics.returnContribution)} />
             <LayerMetric label="Realized P/L" value={formatCurrency(result.swingMetrics.realizedProfitLoss)} tone={getTone(result.swingMetrics.realizedProfitLoss)} />
             <LayerMetric label="Completed Cycles" value={String(result.swingMetrics.cycleCount)} />
-            <LayerMetric label="Entries" value={String(result.swingMetrics.entryCount)} />
-            <LayerMetric label="Exits" value={String(result.swingMetrics.exitCount)} />
+            <LayerMetric label="Swing BUY" value={String(result.swingMetrics.entryCount)} />
+            <LayerMetric label="Swing SELL" value={String(result.swingMetrics.exitCount)} />
             <LayerMetric label="Average Days / Cycle" value={formatCompactNumber(result.swingMetrics.averageDaysPerCycle, 1)} />
-            <LayerMetric label="Profitable Cycles" value={String(result.swingMetrics.profitableCycleCount)} />
+            <LayerMetric label="Median Days / Cycle" value={formatCompactNumber(result.swingMetrics.medianDaysPerCycle, 1)} />
+            <LayerMetric label="1-bar Swing Cycles" value={String(result.swingMetrics.oneBarCycleCount)} />
+            <LayerMetric label="Winning Swing Cycles" value={String(result.swingMetrics.profitableCycleCount)} />
+            <LayerMetric label="Losing Swing Cycles" value={String(result.swingMetrics.losingCycleCount)} />
             <LayerMetric label="Swing Win Rate" value={formatPercentage(result.swingMetrics.winRate)} />
             <LayerMetric label="Average Swing Return" value={formatSignedPercentage(result.swingMetrics.averageReturn)} tone={getTone(result.swingMetrics.averageReturn)} />
             <LayerMetric label="Swing Total Fees" value={formatCurrency(result.swingMetrics.fees)} />

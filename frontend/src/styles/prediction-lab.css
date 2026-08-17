@@ -83,7 +83,7 @@
 
 .prediction-config-grid {
   display: grid;
-  grid-template-columns: minmax(220px, 1.45fr) repeat(2, minmax(140px, 1fr));
+  grid-template-columns: minmax(220px, 1.45fr) repeat(3, minmax(130px, 1fr));
   gap: 10px 12px;
 }
 
@@ -102,7 +102,9 @@
   text-transform: uppercase;
 }
 
-.prediction-field select {
+.prediction-field select,
+.prediction-field .security-search-select > input {
+  box-sizing: border-box;
   width: 100%;
   height: 38px;
   padding: 0 11px;
@@ -113,27 +115,67 @@
   outline: none;
   font: inherit;
   font-size: 10px;
-  cursor: pointer;
   transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
 
-.prediction-field select:focus {
+.prediction-field select {
+  cursor: pointer;
+}
+
+.prediction-field .security-search-select {
+  width: 100%;
+}
+
+.prediction-field .security-search-select > input {
+  padding-right: 30px;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.prediction-field .security-search-select > input::-webkit-search-cancel-button,
+.prediction-field .security-search-select > input::-webkit-search-decoration {
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.prediction-field select:hover:not(:disabled),
+.prediction-field .security-search-select > input:hover:not(:disabled) {
+  background: #ffffff;
+  border-color: #d5dbe5;
+}
+
+.prediction-field select:focus,
+.prediction-field .security-search-select > input:focus {
   background: #ffffff;
   border-color: rgba(104, 119, 245, 0.62);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-.prediction-field select:disabled {
+.prediction-field .security-search-select > input[aria-invalid='true'] {
+  border-color: rgba(224, 85, 105, 0.72);
+}
+
+.prediction-field select:disabled,
+.prediction-field .security-search-select > input:disabled {
   color: #9099a8;
   cursor: not-allowed;
 }
 
+.prediction-field .security-search-popover {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 100%;
+  font-family: inherit;
+}
+
+.prediction-field .security-search-popover button {
+  font-family: inherit;
+}
+
 .prediction-config-footer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 228px;
-  gap: 12px;
-  align-items: end;
-  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
 }
 
 .prediction-toggle-grid {
@@ -205,12 +247,12 @@
 
 .prediction-config-actions {
   display: flex;
-  align-items: stretch;
-  flex-direction: column;
-  gap: 7px;
+  align-items: center;
+  gap: 12px;
 }
 
 .prediction-config-actions > span {
+  max-width: 440px;
   color: #737f91;
   font-size: 9px;
   line-height: 1.3;
@@ -345,11 +387,86 @@
   gap: 10px;
 }
 
+.prediction-ml-pending {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 15px 18px;
+  background: #fafbfe;
+}
+
+.prediction-ml-pending-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  color: #6877f5;
+  background: rgba(104, 119, 245, 0.11);
+  border-radius: 10px;
+}
+
+.prediction-ml-pending-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.prediction-ml-pending p {
+  margin: 0 0 3px;
+  color: #9099a8;
+  font-size: 8px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.prediction-ml-pending h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+}
+
+.prediction-ml-pending div > span {
+  display: block;
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
 .prediction-overview-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: stretch;
   gap: 10px;
+}
+
+.prediction-output-status-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.prediction-output-status {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  color: #596579;
+  background: #fafbfe;
+  border: 1px solid #e6e9f0;
+  border-radius: 10px;
+}
+
+.prediction-output-status strong {
+  color: #3e495d;
+  font-size: 10px;
+}
+
+.prediction-output-status span {
+  font-size: 9px;
+  line-height: 1.45;
 }
 
 .prediction-overview-tile {
@@ -489,6 +606,7 @@
 
 .prediction-metric-grid div,
 .prediction-compact-metrics div,
+.prediction-technical-grid div,
 .prediction-performance-grid div {
   min-width: 0;
   padding: 9px 10px;
@@ -499,6 +617,7 @@
 
 .prediction-metric-grid dt,
 .prediction-compact-metrics dt,
+.prediction-technical-grid dt,
 .prediction-performance-grid dt {
   overflow: hidden;
   color: #929baa;
@@ -511,6 +630,7 @@
 
 .prediction-metric-grid dd,
 .prediction-compact-metrics dd,
+.prediction-technical-grid dd,
 .prediction-performance-grid dd {
   margin: 5px 0 0;
   color: #303b50;
@@ -524,6 +644,13 @@
   color: #657186;
   font-size: 11px;
   line-height: 1.65;
+}
+
+.prediction-technical-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0 0;
 }
 
 .prediction-chart-legend {
@@ -1362,11 +1489,11 @@
 }
 
 @media (max-width: 1240px) {
-  .prediction-config-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .prediction-metric-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .prediction-metric-grid {
+  .prediction-technical-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
@@ -1393,7 +1520,10 @@
 }
 
 @media (max-width: 960px) {
-  .prediction-config-footer,
+  .prediction-config-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .prediction-paired-grid {
     grid-template-columns: 1fr;
   }
@@ -1429,6 +1559,14 @@
 
   .prediction-config-actions button {
     width: 100%;
+  }
+
+  .prediction-config-footer {
+    display: block;
+  }
+
+  .prediction-technical-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .prediction-overview-grid,
@@ -1550,9 +1688,14 @@
   .prediction-config-grid,
   .prediction-toggle-grid,
   .prediction-overview-grid,
+  .prediction-output-status-grid,
   .prediction-metric-grid,
   .prediction-reliability-list,
   .prediction-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .prediction-technical-grid {
     grid-template-columns: 1fr;
   }
 

@@ -55,6 +55,14 @@ function getQuarterRange(preset, year) {
   }
 }
 
+function getBrowserTransactionTimezone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || ''
+  } catch {
+    return ''
+  }
+}
+
 function getTransactionDateRange(filters) {
   const today = new Date()
   const todayString = formatLocalDate(today)
@@ -101,6 +109,7 @@ function buildTransactionQuery(filters) {
     end_date: endDate,
     page: filters.page,
     page_size: filters.pageSize,
+    timezone: getBrowserTransactionTimezone(),
   }
 }
 

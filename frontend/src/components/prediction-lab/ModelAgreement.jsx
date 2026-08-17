@@ -1,4 +1,7 @@
 export default function ModelAgreement({ agreement }) {
+  if (!agreement) {
+    return <section className="prediction-card prediction-equal-card"><div className="prediction-card-header"><div><p>Consensus check</p><h2>Model Agreement</h2><span>Not implemented until real prediction models are available.</span></div></div></section>
+  }
   const tone = agreement.agreement === 'Strong' ? 'positive' : agreement.agreement === 'Weak' ? 'negative' : 'warning'
 
   return (
@@ -19,7 +22,7 @@ export default function ModelAgreement({ agreement }) {
         </div>
         <div>
           <dt>Models Aligned</dt>
-          <dd>{agreement.dominantCount} of 4</dd>
+          <dd>{agreement.dominantCount} of {agreement.modelCount}</dd>
         </div>
         <div>
           <dt>Probability Range</dt>
@@ -33,4 +36,3 @@ export default function ModelAgreement({ agreement }) {
     </section>
   )
 }
-

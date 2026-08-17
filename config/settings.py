@@ -33,10 +33,12 @@ ALLOWED_HOSTS = env.list('DJANGO_ALLOWED_HOSTS', default=['127.0.0.1', 'localhos
 
 INSTALLED_APPS = [
     'accounts.apps.AccountsConfig',
+    'agent.apps.AgentConfig',
     'backtest.apps.BacktestConfig',
     'dashboard.apps.DashboardConfig',
     'market.apps.MarketConfig',
     'portfolio.apps.PortfolioConfig',
+    'prediction.apps.PredictionConfig',
     'watchlist.apps.WatchlistConfig',
     'corsheaders',
     'rest_framework',
@@ -126,6 +128,20 @@ MARKET_SUMMARY_CACHE_TTL_SECONDS = env.int('MARKET_SUMMARY_CACHE_TTL_SECONDS', d
 MARKET_DATA_QUOTE_CACHE_TTL_SECONDS = env.int('MARKET_DATA_QUOTE_CACHE_TTL_SECONDS', default=60)
 MARKET_DATA_SYMBOL_SEARCH_CACHE_TTL_SECONDS = env.int('MARKET_DATA_SYMBOL_SEARCH_CACHE_TTL_SECONDS', default=300)
 PORTFOLIO_PERFORMANCE_CACHE_TTL_SECONDS = env.int('PORTFOLIO_PERFORMANCE_CACHE_TTL_SECONDS', default=60)
+
+# LLM provider configuration stays on the Django backend only.  Never expose
+# these values with a VITE_ prefix or in React code.
+LLM_PROVIDER = env('LLM_PROVIDER', default='deepseek')
+LLM_MODEL = env('LLM_MODEL', default='deepseek-chat')
+DEEPSEEK_API_KEY = env('DEEPSEEK_API_KEY', default='')
+DEEPSEEK_BASE_URL = env('DEEPSEEK_BASE_URL', default='https://api.deepseek.com')
+LLM_TIMEOUT_SECONDS = env.float('LLM_TIMEOUT_SECONDS', default=30)
+
+PREDICTION_ARTIFACT_CACHE_TTL_SECONDS = env.int(
+    'PREDICTION_ARTIFACT_CACHE_TTL_SECONDS',
+    default=604800,
+)
+PREDICTION_RF_MAX_WORKERS = env.int('PREDICTION_RF_MAX_WORKERS', default=4)
 
 LOGGING = {
     'version': 1,

@@ -4,7 +4,6 @@ from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
 
-from market.models import Security
 from market.serializers import SecuritySummarySerializer
 from market.services import (
     MARKET_DATA_QUOTE_STATUS_UNAVAILABLE,
@@ -12,17 +11,14 @@ from market.services import (
     MarketDataInvalidSymbol,
     MarketDataRateLimited,
     MarketDataUnavailable,
+    SecuritySelectionValidationError,
     UnsupportedMarketDataInterval,
     UnsupportedMarketDataRange,
     UnsupportedMarketDataSecurity,
-    get_asset_type_from_instrument_type,
+    get_or_create_verified_security,
     get_security_daily_market_data,
     get_security_latest_quotes,
-    normalize_security_currency,
-    normalize_security_exchange,
-    normalize_security_mic_code,
-    normalize_security_search_text,
-    normalize_security_symbol,
+    get_verified_security_search_item,
     search_security_symbols,
 )
 
@@ -40,10 +36,11 @@ _summary_locks = {}
 _summary_locks_guard = Lock()
 
 
-class WatchlistSymbolValidationError(Exception):
-    def __init__(self, detail):
-        self.detail = detail
-        super().__init__(str(detail))
+WatchlistSymbolValidationError = SecuritySelectionValidationError
+
+
+def get_verified_search_item(data):
+    return get_verified_security_search_item(data, search_func=search_security_symbols)
 
 
 def get_primary_watchlist(user):
@@ -71,172 +68,6 @@ def get_or_create_primary_watchlist(user, defaults=None):
             'name': defaults.get('name') or DEFAULT_WATCHLIST_NAME,
         }
         return Watchlist.objects.create(user=user, **create_defaults), True
-
-
-def get_search_item_value(item, key):
-    value = item.get(key)
-    return '' if value is None else str(value)
-
-
-def search_item_matches_submission(item, data):
-    submitted_symbol = normalize_security_symbol(data.get('symbol'))
-    if normalize_security_symbol(item.get('symbol')) != submitted_symbol:
-        return False
-
-    submitted_id = data.get('id')
-    if submitted_id and item.get('id') == submitted_id:
-        return True
-
-    submitted_mic_code = normalize_security_mic_code(data.get('mic_code'))
-    item_mic_code = normalize_security_mic_code(item.get('mic_code'))
-    if submitted_mic_code and item_mic_code:
-        return submitted_mic_code == item_mic_code
-
-    submitted_exchange = normalize_security_exchange(data.get('exchange'))
-    item_exchange = normalize_security_exchange(item.get('exchange'))
-    if submitted_exchange and item_exchange:
-        return submitted_exchange.lower() == item_exchange.lower()
-
-    return bool(item.get('is_local'))
-
-
-def get_local_security_from_submission(data):
-    security_id = data.get('id')
-    if not security_id:
-        return None
-
-    try:
-        security = Security.objects.get(pk=security_id, is_active=True)
-    except Security.DoesNotExist:
-        raise WatchlistSymbolValidationError({'security': 'Selected security is no longer available.'})
-
-    submitted_symbol = normalize_security_symbol(data.get('symbol'))
-    if submitted_symbol and security.symbol != submitted_symbol:
-        raise WatchlistSymbolValidationError({'security': 'Selected security does not match the submitted symbol.'})
-
-    submitted_mic_code = normalize_security_mic_code(data.get('mic_code'))
-    if submitted_mic_code and security.mic_code and security.mic_code != submitted_mic_code:
-        raise WatchlistSymbolValidationError({'security': 'Selected security does not match the submitted exchange.'})
-
-    return security
-
-
-def get_security_search_queries(data):
-    queries = []
-    for value in (data.get('search_query'), data.get('symbol'), data.get('name')):
-        query = normalize_security_search_text(value)
-        if len(query) >= 2 and query.lower() not in {item.lower() for item in queries}:
-            queries.append(query)
-    return queries
-
-
-def get_verified_search_item(data):
-    local_security = get_local_security_from_submission(data)
-    if local_security is not None:
-        return {
-            'id': local_security.id,
-            'symbol': local_security.symbol,
-            'name': local_security.name,
-            'exchange': local_security.exchange,
-            'mic_code': local_security.mic_code,
-            'instrument_type': 'ETF' if local_security.asset_type == Security.AssetType.ETF else 'Common Stock',
-            'country': local_security.country,
-            'currency': local_security.currency,
-            'is_local': True,
-        }
-
-    queries = get_security_search_queries(data)
-    if not queries:
-        raise WatchlistSymbolValidationError({'symbol': 'Enter a valid symbol or company name.'})
-
-    for query in queries:
-        payload = search_security_symbols(query)
-        for item in payload.get('items', ()):
-            if search_item_matches_submission(item, data):
-                return item
-
-    raise WatchlistSymbolValidationError({'security': 'Selected security could not be verified.'})
-
-
-def get_verified_security_defaults(search_item):
-    symbol = normalize_security_symbol(search_item.get('symbol'))
-    if not symbol:
-        raise WatchlistSymbolValidationError({'symbol': 'Selected security is missing a symbol.'})
-
-    instrument_type = get_search_item_value(search_item, 'instrument_type')
-    asset_type = get_asset_type_from_instrument_type(instrument_type)
-    if asset_type is None:
-        raise WatchlistSymbolValidationError({
-            'instrument_type': 'Only supported stock and ETF securities can be added.'
-        })
-
-    return {
-        'symbol': symbol,
-        'name': normalize_security_search_text(search_item.get('name')) or symbol,
-        'asset_type': asset_type,
-        'exchange': normalize_security_exchange(search_item.get('exchange')),
-        'mic_code': normalize_security_mic_code(search_item.get('mic_code')),
-        'country': normalize_security_search_text(search_item.get('country')),
-        'currency': normalize_security_currency(search_item.get('currency')),
-    }
-
-
-def update_security_metadata_if_needed(security, defaults):
-    updates = {}
-    for field in ('mic_code', 'country', 'currency'):
-        if not getattr(security, field) and defaults.get(field):
-            updates[field] = defaults[field]
-
-    if not security.exchange and defaults.get('exchange'):
-        updates['exchange'] = defaults['exchange']
-
-    if not security.name and defaults.get('name'):
-        updates['name'] = defaults['name']
-
-    if security.asset_type != defaults['asset_type']:
-        updates['asset_type'] = defaults['asset_type']
-
-    if not updates:
-        return security
-
-    for field, value in updates.items():
-        setattr(security, field, value)
-    security.save(update_fields=[*updates.keys(), 'updated_at'])
-    return security
-
-
-def get_or_create_verified_security(search_item):
-    local_id = search_item.get('id')
-    defaults = get_verified_security_defaults(search_item)
-    symbol = defaults['symbol']
-    mic_code = defaults['mic_code']
-    exchange = defaults['exchange']
-
-    queryset = Security.objects.select_for_update().filter(symbol=symbol)
-
-    if local_id:
-        try:
-            security = queryset.get(pk=local_id, is_active=True)
-        except Security.DoesNotExist:
-            raise WatchlistSymbolValidationError({'security': 'Selected security is no longer available.'})
-        return update_security_metadata_if_needed(security, defaults), False
-
-    security = None
-    if mic_code:
-        security = queryset.filter(mic_code=mic_code).first()
-
-    if security is None and exchange:
-        security = queryset.filter(exchange__iexact=exchange, mic_code='').first()
-
-    if security is None:
-        symbol_matches = tuple(queryset)
-        if len(symbol_matches) == 1 and not symbol_matches[0].mic_code:
-            security = symbol_matches[0]
-
-    if security is not None:
-        return update_security_metadata_if_needed(security, defaults), False
-
-    return Security.objects.create(**defaults, is_active=True), True
 
 
 def serialize_watchlist_item_result(item):

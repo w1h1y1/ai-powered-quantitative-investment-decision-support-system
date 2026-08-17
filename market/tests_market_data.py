@@ -309,6 +309,66 @@ class SecuritySymbolSearchTests(TestCase):
         with self.assertRaises(MarketDataRateLimited):
             search_security_symbols('AVGO', client=client)
 
+    def test_symbol_search_keeps_local_result_when_remote_provider_is_unavailable(self):
+        local_security = Security.objects.create(
+            symbol='AAPL',
+            name='Apple Inc.',
+            asset_type=Security.AssetType.STOCK,
+            exchange='NASDAQ',
+            mic_code='XNAS',
+            country='United States',
+            currency='USD',
+        )
+        client = FakeTwelveDataClient(
+            symbol_search_error=TwelveDataError('provider unavailable'),
+        )
+
+        payload = search_security_symbols('AAPL', client=client)
+
+        self.assertEqual([item['id'] for item in payload['items']], [local_security.id])
+        self.assertTrue(payload['items'][0]['is_local'])
+        self.assertIn('temporarily unavailable', payload['metadata']['remote_error'])
+
+    def test_one_character_query_does_not_call_remote_search_or_create_security(self):
+        client = FakeTwelveDataClient(symbol_search_results=[{
+            'symbol': 'TSLA',
+            'instrument_name': 'Tesla Inc.',
+            'instrument_type': 'Common Stock',
+        }])
+
+        payload = search_security_symbols('T', client=client)
+
+        self.assertEqual(payload['items'], ())
+        self.assertEqual(client.symbol_search_calls, [])
+        self.assertEqual(Security.objects.count(), 0)
+
+    def test_symbol_search_filters_unsupported_remote_assets_and_labels_source(self):
+        client = FakeTwelveDataClient(symbol_search_results=[
+            {
+                'symbol': 'TSLA',
+                'instrument_name': 'Tesla Inc.',
+                'exchange': 'NASDAQ',
+                'mic_code': 'XNAS',
+                'instrument_type': 'Common Stock',
+                'country': 'United States',
+                'currency': 'USD',
+            },
+            {
+                'symbol': 'BTC/USD',
+                'instrument_name': 'Bitcoin',
+                'exchange': 'Coinbase',
+                'instrument_type': 'Crypto',
+                'currency': 'USD',
+            },
+        ])
+
+        payload = search_security_symbols('TS', client=client)
+
+        self.assertEqual([item['symbol'] for item in payload['items']], ['TSLA'])
+        self.assertEqual(payload['items'][0]['source'], 'remote')
+        self.assertFalse(payload['items'][0]['is_local'])
+        self.assertEqual(Security.objects.count(), 0)
+
 
 class TwelveDataParsingTests(TestCase):
     def test_parse_bar_uses_decimal_values_and_integer_volume(self):
@@ -381,7 +441,7 @@ class TwelveDataParsingTests(TestCase):
         self.assertEqual(bars[-1].timestamp, '2026-07-30 15:59:00')
 
     @override_settings(TWELVE_DATA_TIMEZONE='America/New_York')
-    def test_daily_time_series_request_keeps_date_boundaries(self):
+    def test_daily_time_series_request_converts_inclusive_end_to_provider_exclusive_boundary(self):
         captured = {}
 
         class CapturingTwelveDataClient(TwelveDataClient):
@@ -409,7 +469,7 @@ class TwelveDataParsingTests(TestCase):
         )
 
         self.assertEqual(captured['params']['start_date'], '2026-07-01')
-        self.assertEqual(captured['params']['end_date'], '2026-07-30')
+        self.assertEqual(captured['params']['end_date'], '2026-07-31')
         self.assertEqual(captured['params']['timezone'], 'America/New_York')
 
 
@@ -942,6 +1002,140 @@ class MarketDataServiceTests(TestCase):
         self.assertEqual(result.session_close_adjustments[-1]['official_close'], '308.91000')
         self.assertEqual(result.provider_metadata['time_series']['last_timestamp'], f'{today.isoformat()} 15:59:00')
 
+    @override_settings(MARKET_DATA_CACHE_TTL_SECONDS=3600)
+    def test_intraday_session_close_reuses_fresh_daily_cache_without_daily_provider_call(self):
+        security = make_security()
+        today = get_latest_complete_market_date()
+        warmup_start = expected_warmup_start('1D', today, '1min')
+        # Seed a fresh daily cache that covers the full alignment window.
+        for offset in range((today - warmup_start).days + 1):
+            SecurityDailyPrice.objects.create(
+                security=security,
+                date=warmup_start + timedelta(days=offset),
+                open=Decimal('100'),
+                high=Decimal('102'),
+                low=Decimal('99'),
+                close=Decimal('101'),
+                volume=1000,
+            )
+        client = FakeTwelveDataClient(bars=[
+            FakeDailyBar(
+                today,
+                Decimal('100'),
+                Decimal('101'),
+                Decimal('99'),
+                Decimal('99.5'),
+                1000,
+                timestamp=f'{today.isoformat()} 15:59:00',
+            ),
+        ])
+
+        result = get_security_daily_market_data(
+            security,
+            range_key='1D',
+            interval='1min',
+            client=client,
+        )
+
+        self.assertEqual([call['interval'] for call in client.calls], ['1min'])
+        self.assertEqual(result.range_key, '1D')
+        self.assertEqual(result.interval, '1min')
+        self.assertEqual(result.data_source, 'twelve_data')
+        self.assertFalse(result.is_stale)
+        self.assertEqual(result.values[-1].close, Decimal('101'))
+        self.assertEqual(result.session_close_adjustments[-1]['original_close'], '99.5')
+        self.assertEqual(result.session_close_adjustments[-1]['official_close'], '101.000000')
+        self.assertEqual(result.provider_metadata['session_close_source']['source'], 'database_cache')
+        self.assertEqual(result.provider_metadata['session_close_source']['cache_status'], 'hit')
+
+    def test_intraday_session_close_calls_daily_provider_when_cache_missing(self):
+        security = make_security()
+        today = get_latest_complete_market_date()
+        client = FakeTwelveDataClient(
+            bars=[
+                FakeDailyBar(
+                    today,
+                    Decimal('100'),
+                    Decimal('101'),
+                    Decimal('99'),
+                    Decimal('99.5'),
+                    1000,
+                    timestamp=f'{today.isoformat()} 15:59:00',
+                ),
+            ],
+            daily_bars=[
+                FakeDailyBar(
+                    today,
+                    Decimal('100'),
+                    Decimal('102'),
+                    Decimal('99'),
+                    Decimal('101'),
+                    1000,
+                ),
+            ],
+        )
+
+        result = get_security_daily_market_data(
+            security,
+            range_key='1D',
+            interval='1min',
+            client=client,
+        )
+
+        self.assertEqual([call['interval'] for call in client.calls], ['1min', '1day'])
+        self.assertEqual(result.values[-1].close, Decimal('101'))
+        self.assertEqual(result.session_close_adjustments[-1]['official_close'], '101')
+        self.assertEqual(result.provider_metadata['session_close_source']['endpoint'], 'time_series')
+
+    @override_settings(MARKET_DATA_CACHE_TTL_SECONDS=3600)
+    def test_intraday_session_close_calls_daily_provider_when_coverage_insufficient(self):
+        security = make_security()
+        today = get_latest_complete_market_date()
+        # Daily cache exists but only covers the latest day, not the warmup start.
+        SecurityDailyPrice.objects.create(
+            security=security,
+            date=today,
+            open=Decimal('100'),
+            high=Decimal('102'),
+            low=Decimal('99'),
+            close=Decimal('101'),
+            volume=1000,
+        )
+        client = FakeTwelveDataClient(
+            bars=[
+                FakeDailyBar(
+                    today,
+                    Decimal('100'),
+                    Decimal('101'),
+                    Decimal('99'),
+                    Decimal('99.5'),
+                    1000,
+                    timestamp=f'{today.isoformat()} 15:59:00',
+                ),
+            ],
+            daily_bars=[
+                FakeDailyBar(
+                    today,
+                    Decimal('100'),
+                    Decimal('102'),
+                    Decimal('99'),
+                    Decimal('101'),
+                    1000,
+                ),
+            ],
+        )
+
+        result = get_security_daily_market_data(
+            security,
+            range_key='1D',
+            interval='1min',
+            client=client,
+        )
+
+        self.assertEqual([call['interval'] for call in client.calls], ['1min', '1day'])
+        self.assertEqual(result.values[-1].close, Decimal('101'))
+        self.assertEqual(result.provider_metadata['session_close_source']['endpoint'], 'time_series')
+
     def test_fetches_one_week_hourly_prices_without_daily_cache(self):
         security = make_security()
         today = get_latest_complete_market_date()
@@ -1187,6 +1381,195 @@ class SecuritySearchApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['items'][0]['symbol'], 'AVGO')
         search_mock.assert_called_once_with('AVGO', force_refresh=False)
+
+
+class SecuritySectorContextApiTests(APITestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username='sector-context-user',
+            password='password123',
+        )
+        self.client.force_authenticate(self.user)
+        self.securities = {
+            symbol: Security.objects.create(
+                symbol=symbol,
+                name=f'{symbol} Test Security',
+                asset_type=Security.AssetType.STOCK,
+                exchange='NASDAQ',
+                currency='USD',
+            )
+            for symbol in ('AAPL', 'JPM', 'XOM', 'UNKNOWN')
+        }
+
+    def get_sector_context(self, symbol):
+        security = self.securities[symbol]
+        return self.client.get(reverse('security-sector-context', args=[security.id]))
+
+    def test_aapl_sector_context_returns_spy_qqq_xlk(self):
+        response = self.get_sector_context('AAPL')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['sector'], 'Information Technology')
+        self.assertEqual(response.data['sector_benchmark'], 'XLK')
+        self.assertEqual(response.data['broad_market'], 'SPY')
+        self.assertIn('SPY', response.data['allowed_benchmarks'])
+        self.assertIn('XLK', response.data['allowed_benchmarks'])
+        self.assertIn('QQQ', response.data['allowed_benchmarks'])
+        self.assertNotIn('XLF', response.data['allowed_benchmarks'])
+        self.assertNotIn('XLE', response.data['allowed_benchmarks'])
+        self.assertNotIn('XLY', response.data['allowed_benchmarks'])
+
+    def test_jpm_sector_context_returns_spy_xlf(self):
+        response = self.get_sector_context('JPM')
+
+        self.assertEqual(response.data['sector'], 'Financials')
+        self.assertEqual(response.data['sector_benchmark'], 'XLF')
+        self.assertIn('SPY', response.data['allowed_benchmarks'])
+        self.assertIn('XLF', response.data['allowed_benchmarks'])
+        self.assertNotIn('QQQ', response.data['allowed_benchmarks'])
+
+    def test_xom_sector_context_returns_spy_xle(self):
+        response = self.get_sector_context('XOM')
+
+        self.assertEqual(response.data['sector'], 'Energy')
+        self.assertEqual(response.data['sector_benchmark'], 'XLE')
+        self.assertIn('SPY', response.data['allowed_benchmarks'])
+        self.assertIn('XLE', response.data['allowed_benchmarks'])
+        self.assertNotIn('QQQ', response.data['allowed_benchmarks'])
+
+    def test_unknown_sector_falls_back_to_spy(self):
+        response = self.get_sector_context('UNKNOWN')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIsNone(response.data['sector'])
+        self.assertIsNone(response.data['sector_benchmark'])
+        self.assertEqual(response.data['allowed_benchmarks'], ['SPY'])
+
+    def test_sector_context_requires_authentication(self):
+        self.client.force_authenticate(user=None)
+        security = self.securities['AAPL']
+        response = self.client.get(reverse('security-sector-context', args=[security.id]))
+        self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+
+class SecurityResolveApiTests(APITestCase):
+    remote_item = {
+        'id': None,
+        'symbol': 'JPM',
+        'name': 'JPMorgan Chase & Co.',
+        'exchange': 'NYSE',
+        'mic_code': 'XNYS',
+        'instrument_type': 'Common Stock',
+        'country': 'United States',
+        'currency': 'USD',
+        'is_local': False,
+        'source': 'remote',
+        'is_preferred': True,
+    }
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.user = User.objects.create_user(username='security_resolve_user', password='pass')
+        self.client.force_authenticate(user=self.user)
+
+    def test_security_resolve_requires_authentication(self):
+        self.client.force_authenticate(user=None)
+
+        response = self.client.post(reverse('security-resolve'), self.selection(), format='json')
+
+        self.assertIn(response.status_code, [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN])
+
+    def selection(self, **overrides):
+        return {
+            **self.remote_item,
+            'search_query': 'JPM',
+            **overrides,
+        }
+
+    def search_payload(self, item=None):
+        result = item or self.remote_item
+        return {
+            'query': result['symbol'],
+            'items': [result],
+            'metadata': {
+                'query': result['symbol'],
+                'count': 1,
+                'local_count': 0,
+                'remote_error': '',
+                'cache_status': 'fresh',
+            },
+        }
+
+    def test_selecting_verified_remote_result_creates_active_security(self):
+        with patch('market.services.search_security_symbols', return_value=self.search_payload()):
+            response = self.client.post(reverse('security-resolve'), self.selection(), format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data['created'])
+        self.assertEqual(response.data['security']['symbol'], 'JPM')
+        security = Security.objects.get(symbol='JPM', mic_code='XNYS')
+        self.assertTrue(security.is_active)
+        self.assertEqual(security.name, 'JPMorgan Chase & Co.')
+
+    def test_selecting_same_listing_twice_reuses_one_security(self):
+        with patch('market.services.search_security_symbols', return_value=self.search_payload()):
+            first = self.client.post(reverse('security-resolve'), self.selection(), format='json')
+            second = self.client.post(reverse('security-resolve'), self.selection(), format='json')
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertFalse(second.data['created'])
+        self.assertEqual(Security.objects.filter(symbol='JPM', mic_code='XNYS').count(), 1)
+
+    def test_selecting_remote_result_reactivates_matching_inactive_security(self):
+        security = Security.objects.create(
+            symbol='JPM',
+            name='JPMorgan Chase & Co.',
+            asset_type=Security.AssetType.STOCK,
+            exchange='NYSE',
+            mic_code='XNYS',
+            country='United States',
+            currency='USD',
+            is_active=False,
+        )
+        with patch('market.services.search_security_symbols', return_value=self.search_payload()):
+            response = self.client.post(reverse('security-resolve'), self.selection(), format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data['created'])
+        security.refresh_from_db()
+        self.assertTrue(security.is_active)
+        self.assertEqual(Security.objects.filter(symbol='JPM').count(), 1)
+
+    def test_unverified_selection_returns_400_without_creating_security(self):
+        with patch('market.services.search_security_symbols', return_value={
+            'query': 'JPM', 'items': [], 'metadata': {},
+        }):
+            response = self.client.post(reverse('security-resolve'), self.selection(), format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(Security.objects.filter(symbol='JPM').exists())
+
+    def test_provider_rate_limit_returns_429_without_creating_security(self):
+        with patch(
+            'market.services.search_security_symbols',
+            side_effect=MarketDataRateLimited('Provider rate limit reached.'),
+        ):
+            response = self.client.post(reverse('security-resolve'), self.selection(), format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertFalse(Security.objects.filter(symbol='JPM').exists())
+
+    def test_provider_unavailable_returns_503_without_creating_security(self):
+        with patch(
+            'market.services.search_security_symbols',
+            side_effect=MarketDataUnavailable('Remote search temporarily unavailable.'),
+        ):
+            response = self.client.post(reverse('security-resolve'), self.selection(), format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertFalse(Security.objects.filter(symbol='JPM').exists())
 
 
 class MarketDataApiTests(APITestCase):

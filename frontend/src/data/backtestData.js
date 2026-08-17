@@ -1,20 +1,72 @@
+import { getTodayDateInputValue } from '../components/dashboard/dashboardSecurityModel.js'
+
 export const backtestHistoryStorageKey = 'aiquantification.backtest.history'
 export const selectedBacktestStorageKey = 'aiquantification.backtest.selectedBacktestId'
 export const legacySelectedBacktestStorageKey = 'selectedBacktestId'
 export const backtestHistoryLimit = 8
-export const backtestResultSchemaVersion = 5
+export const backtestResultSchemaVersion = 6
+
+export const backtestMarketBenchmark = {
+  symbol: 'SPY',
+  name: 'SPDR S&P 500 ETF',
+}
+
+export const backtestBenchmarkOptions = [
+  { symbol: 'SPY', name: 'SPDR S&P 500 ETF' },
+  { symbol: 'QQQ', name: 'Invesco QQQ ETF' },
+  { symbol: 'XLF', name: 'Financial Select Sector SPDR Fund' },
+  { symbol: 'XLE', name: 'Energy Select Sector SPDR Fund' },
+  { symbol: 'XLC', name: 'Communication Services Select Sector SPDR Fund' },
+  { symbol: 'XLK', name: 'Technology Select Sector SPDR Fund' },
+  { symbol: 'XLY', name: 'Consumer Discretionary Select Sector SPDR Fund' },
+  { symbol: 'XLI', name: 'Industrial Select Sector SPDR Fund' },
+  { symbol: 'XLV', name: 'Health Care Select Sector SPDR Fund' },
+  { symbol: 'XLP', name: 'Consumer Staples Select Sector SPDR Fund' },
+  { symbol: 'XLU', name: 'Utilities Select Sector SPDR Fund' },
+  { symbol: 'XLB', name: 'Materials Select Sector SPDR Fund' },
+  { symbol: 'XLRE', name: 'Real Estate Select Sector SPDR Fund' },
+]
+
+export function sanitizeBacktestBenchmarkSymbol(symbol, availableSymbols = []) {
+  const normalized = String(symbol ?? '').trim().toUpperCase()
+  const allowed = backtestBenchmarkOptions.some((option) => option.symbol === normalized)
+  if (!allowed) return backtestMarketBenchmark.symbol
+  if (availableSymbols.length && !availableSymbols.includes(normalized)) {
+    return backtestMarketBenchmark.symbol
+  }
+  return normalized
+}
+
+export function filterBacktestBenchmarkOptions(allowedSymbols, existingAssets = []) {
+  const allowed = new Set(allowedSymbols ?? [])
+  return backtestBenchmarkOptions.filter((option) => (
+    allowed.has(option.symbol)
+    && (
+      existingAssets.length === 0
+      || existingAssets.some((asset) => asset.symbol === option.symbol)
+    )
+  ))
+}
 
 export const backtestStrategies = [
   {
     id: 'market-regime-core-swing',
-    label: 'Market-Regime Core and Swing Strategy',
-    description: 'Uses benchmark regime, ATR-sized Core exposure and independent pullback Swing cycles.',
+    label: 'Market-Regime Hybrid Strategy (Core + Swing)',
+    description: 'Regime-aware Core trend following with pullback-based Swing trading.',
     parameters: [
       { key: 'coreFastMa', label: 'Core fast MA', min: 1, step: 1 },
       { key: 'coreSlowMa', label: 'Core slow MA', min: 1, step: 1 },
       { key: 'coreRiskPercent', label: 'Core Risk (%)', min: 0.1, max: 5, step: 0.1 },
       { key: 'coreAtrMultiplier', label: 'Core ATR Multiplier', min: 0.5, max: 8, step: 0.1 },
-      { key: 'maxCoreExposurePercent', label: 'Max Core Exposure (%)', min: 10, max: 100, step: 5 },
+      {
+        key: 'maxCoreExposurePercent',
+        label: 'Max Target Core Exposure (%)',
+        description: 'Execution-time target cap; mark-to-market exposure may exceed this after prices move.',
+        min: 10,
+        max: 100,
+        step: 5,
+      },
+      { key: 'coreReduceFractionPercent', label: 'Core Reduce Fraction (%)', min: 5, max: 90, step: 5 },
       { key: 'swingRiskPercent', label: 'Swing Risk (%)', min: 0.1, max: 2, step: 0.1 },
       { key: 'swingAtrMultiplier', label: 'Swing ATR Multiplier', min: 0.5, max: 5, step: 0.1 },
       { key: 'swingRsiLookback', label: 'Swing RSI Lookback', min: 1, max: 60, step: 1 },
@@ -29,17 +81,14 @@ export const backtestStrategies = [
           { value: 'SMA10', label: 'SMA10' },
         ],
       },
-      { key: 'swingCooldownDays', label: 'Swing Cooldown Days', min: 0, max: 30, step: 1 },
     ],
   },
 ]
 
-export const defaultBacktestConfig = {
+const defaultBacktestParameters = {
   symbol: 'AAPL',
   benchmarkSymbol: 'SPY',
   strategyId: 'market-regime-core-swing',
-  startDate: '2025-07-01',
-  endDate: '2026-06-30',
   initialCapital: '10000',
   transactionFee: '1.00',
   coreFastMa: '20',
@@ -47,14 +96,32 @@ export const defaultBacktestConfig = {
   coreRiskPercent: '2',
   coreAtrMultiplier: '2.5',
   maxCoreExposurePercent: '80',
+  coreReduceFractionPercent: '25',
   swingRiskPercent: '1',
-  swingAtrMultiplier: '1.2',
+  swingAtrMultiplier: '1.5',
   swingRsiLookback: '10',
   swingRsiEntryLevel: '45',
   swingRsiExitLevel: '60',
   swingAverageType: 'EMA10',
-  swingCooldownDays: '2',
 }
+
+function subtractOneLocalCalendarYear(value) {
+  const targetYear = value.getFullYear() - 1
+  const targetMonth = value.getMonth()
+  const targetDay = Math.min(
+    value.getDate(),
+    new Date(targetYear, targetMonth + 1, 0).getDate(),
+  )
+  return new Date(targetYear, targetMonth, targetDay)
+}
+
+export function createDefaultBacktestConfig(now = new Date()) {
+  const endDate = getTodayDateInputValue(now)
+  const startDate = getTodayDateInputValue(subtractOneLocalCalendarYear(now))
+  return { ...defaultBacktestParameters, startDate, endDate }
+}
+
+export const defaultBacktestConfig = createDefaultBacktestConfig()
 
 function parseNumericValue(value) {
   if (value === null || value === undefined || String(value).trim() === '') return Number.NaN
@@ -83,7 +150,9 @@ export function validateBacktestConfig(config) {
   const transactionFee = parseNumericValue(config.transactionFee)
 
   if (!config.symbol) errors.symbol = 'Select an asset.'
-  if (!config.benchmarkSymbol) errors.benchmarkSymbol = 'Select a benchmark.'
+  if (!backtestBenchmarkOptions.some((option) => option.symbol === config.benchmarkSymbol)) {
+    errors.benchmarkSymbol = 'Select a supported market benchmark.'
+  }
   if (!strategy) errors.strategyId = 'Select a supported strategy.'
   if (!Number.isFinite(startTime)) errors.startDate = 'Enter a valid start date.'
   if (!Number.isFinite(endTime)) errors.endDate = 'Enter a valid end date.'
@@ -104,11 +173,13 @@ export function validateBacktestConfig(config) {
 
   const coreRiskError = validateRange(config.coreRiskPercent, 'Core Risk', 0.1, 5, '%')
   const maxCoreExposureError = validateRange(config.maxCoreExposurePercent, 'Max Core Exposure', 10, 100, '%')
+  const coreReduceFractionError = validateRange(config.coreReduceFractionPercent, 'Core Reduce Fraction', 5, 90, '%')
   const swingRiskError = validateRange(config.swingRiskPercent, 'Swing Risk', 0.1, 2, '%')
   const coreAtrError = validateRange(config.coreAtrMultiplier, 'Core ATR Multiplier', 0.5, 8)
   const swingAtrError = validateRange(config.swingAtrMultiplier, 'Swing ATR Multiplier', 0.5, 5)
   if (coreRiskError) errors.coreRiskPercent = coreRiskError
   if (maxCoreExposureError) errors.maxCoreExposurePercent = maxCoreExposureError
+  if (coreReduceFractionError) errors.coreReduceFractionPercent = coreReduceFractionError
   if (swingRiskError) errors.swingRiskPercent = swingRiskError
   if (coreAtrError) errors.coreAtrMultiplier = coreAtrError
   if (swingAtrError) errors.swingAtrMultiplier = swingAtrError
@@ -116,7 +187,6 @@ export function validateBacktestConfig(config) {
   const swingRsiLookback = parseNumericValue(config.swingRsiLookback)
   const swingRsiEntryLevel = parseNumericValue(config.swingRsiEntryLevel)
   const swingRsiExitLevel = parseNumericValue(config.swingRsiExitLevel)
-  const swingCooldownDays = parseNumericValue(config.swingCooldownDays)
   if (!Number.isInteger(swingRsiLookback) || swingRsiLookback < 1 || swingRsiLookback > 60) {
     errors.swingRsiLookback = 'Swing RSI Lookback must be a whole number between 1 and 60.'
   }
@@ -129,9 +199,6 @@ export function validateBacktestConfig(config) {
   if (!errors.swingRsiEntryLevel && !errors.swingRsiExitLevel && swingRsiEntryLevel >= swingRsiExitLevel) {
     errors.swingRsiEntryLevel = 'Swing RSI Entry Level must be lower than Swing RSI Exit Level.'
   }
-  if (!Number.isInteger(swingCooldownDays) || swingCooldownDays < 0 || swingCooldownDays > 30) {
-    errors.swingCooldownDays = 'Swing Cooldown Days must be a whole number between 0 and 30.'
-  }
   if (!['EMA10', 'SMA10'].includes(config.swingAverageType)) {
     errors.swingAverageType = 'Select EMA10 or SMA10.'
   }
@@ -139,9 +206,12 @@ export function validateBacktestConfig(config) {
   return errors
 }
 
-export function buildBacktestRequestPayload(config, securityId) {
-  return {
-    security: securityId,
+export function buildBacktestRequestPayload(config, assetOrSecurityId) {
+  const asset = assetOrSecurityId && typeof assetOrSecurityId === 'object'
+    ? assetOrSecurityId
+    : null
+  const securityId = asset?.id ?? assetOrSecurityId
+  const payload = {
     benchmark: config.benchmarkSymbol,
     start_date: config.startDate,
     end_date: config.endDate,
@@ -152,14 +222,33 @@ export function buildBacktestRequestPayload(config, securityId) {
     core_risk_fraction: Number(config.coreRiskPercent) / 100,
     core_atr_multiplier: Number(config.coreAtrMultiplier),
     max_core_exposure: Number(config.maxCoreExposurePercent) / 100,
+    core_reduce_fraction: Number(config.coreReduceFractionPercent) / 100,
     swing_risk_fraction: Number(config.swingRiskPercent) / 100,
     swing_atr_multiplier: Number(config.swingAtrMultiplier),
     swing_rsi_lookback: Number(config.swingRsiLookback),
     swing_rsi_entry_level: Number(config.swingRsiEntryLevel),
     swing_rsi_exit_level: Number(config.swingRsiExitLevel),
     swing_trend_average: config.swingAverageType,
-    swing_cooldown_days: Number(config.swingCooldownDays),
   }
+
+  if (Number.isInteger(securityId)) {
+    payload.security = securityId
+  } else {
+    payload.symbol = asset?.symbol ?? config.symbol
+    payload.security_selection = {
+      id: null,
+      symbol: asset?.symbol ?? config.symbol,
+      name: asset?.name ?? asset?.asset ?? asset?.symbol ?? config.symbol,
+      exchange: asset?.exchange ?? '',
+      mic_code: asset?.mic_code ?? asset?.micCode ?? '',
+      instrument_type: asset?.instrument_type ?? (asset?.type === 'ETF' ? 'ETF' : 'Common Stock'),
+      country: asset?.country ?? '',
+      currency: asset?.currency ?? 'USD',
+      search_query: asset?.search_query ?? asset?.symbol ?? config.symbol,
+    }
+  }
+
+  return payload
 }
 
 export function createBacktestRunRequest(config, asset) {
@@ -168,7 +257,7 @@ export function createBacktestRunRequest(config, asset) {
   return {
     config: configSnapshot,
     asset: assetSnapshot,
-    payload: buildBacktestRequestPayload(configSnapshot, assetSnapshot?.id),
+    payload: buildBacktestRequestPayload(configSnapshot, assetSnapshot),
   }
 }
 
@@ -215,10 +304,12 @@ function formatConfigFromResponse(response, fallbackConfig) {
     ...defaultBacktestConfig,
     ...fallbackConfig,
     symbol: response?.security?.symbol ?? fallbackConfig.symbol ?? defaultBacktestConfig.symbol,
-    benchmarkSymbol: response?.benchmark?.symbol
-      ?? parameters.benchmark
-      ?? fallbackConfig.benchmarkSymbol
-      ?? defaultBacktestConfig.benchmarkSymbol,
+    benchmarkSymbol: sanitizeBacktestBenchmarkSymbol(
+      response?.benchmark?.symbol
+        ?? parameters.benchmark
+        ?? fallbackConfig.benchmarkSymbol
+        ?? backtestMarketBenchmark.symbol,
+    ),
     strategyId: 'market-regime-core-swing',
     startDate: response?.data_source?.requested_start_date ?? fallbackConfig.startDate,
     endDate: response?.data_source?.requested_end_date ?? fallbackConfig.endDate,
@@ -229,6 +320,7 @@ function formatConfigFromResponse(response, fallbackConfig) {
     coreRiskPercent: formatPercentInput(coreRiskFraction, fallbackConfig.coreRiskPercent ?? defaultBacktestConfig.coreRiskPercent),
     coreAtrMultiplier: formatMultiplierInput(parameters.core_atr_multiplier, fallbackConfig.coreAtrMultiplier ?? defaultBacktestConfig.coreAtrMultiplier),
     maxCoreExposurePercent: formatPercentInput(parameters.max_core_exposure, fallbackConfig.maxCoreExposurePercent ?? defaultBacktestConfig.maxCoreExposurePercent),
+    coreReduceFractionPercent: formatPercentInput(parameters.core_reduce_fraction, fallbackConfig.coreReduceFractionPercent ?? defaultBacktestConfig.coreReduceFractionPercent),
     swingRiskPercent: formatPercentInput(swingRiskFraction, fallbackConfig.swingRiskPercent ?? defaultBacktestConfig.swingRiskPercent),
     swingAtrMultiplier: formatMultiplierInput(parameters.swing_atr_multiplier, fallbackConfig.swingAtrMultiplier ?? defaultBacktestConfig.swingAtrMultiplier),
     swingRsiLookback: String(parameters.swing_rsi_lookback ?? fallbackConfig.swingRsiLookback ?? defaultBacktestConfig.swingRsiLookback),
@@ -238,7 +330,6 @@ function formatConfigFromResponse(response, fallbackConfig) {
       ?? parameters.swing_average_type
       ?? fallbackConfig.swingAverageType
       ?? defaultBacktestConfig.swingAverageType,
-    swingCooldownDays: String(parameters.swing_cooldown_days ?? fallbackConfig.swingCooldownDays ?? defaultBacktestConfig.swingCooldownDays),
   }
 }
 
@@ -263,8 +354,14 @@ export function normalizeBacktestResult(response, fallbackConfig = {}) {
       ma60: parseNullableNumber(point.ma60),
       rsi14: parseNullableNumber(point.rsi14),
       atr14: parseNullableNumber(point.atr14),
+      macd: parseNullableNumber(point.macd),
+      macdSignal: parseNullableNumber(point.macd_signal),
+      macdHistogram: parseNullableNumber(point.macd_histogram),
       bollingerUpper: parseNullableNumber(point.bollinger_upper),
       marketRegime: point.market_regime || 'NEUTRAL',
+      trendState: point.trend_state || 'WEAK_BULL',
+      trendBearScore: Number(point.trend_bear_score) || 0,
+      trendReversalScore: Number(point.trend_reversal_score) || 0,
       coreQuantity: parseNumber(point.core_quantity),
       coreAverageCost: parseNumber(point.core_average_cost),
       swingQuantity: parseNumber(point.swing_quantity),
@@ -348,13 +445,13 @@ export function normalizeBacktestResult(response, fallbackConfig = {}) {
       coreRiskPercent: parseNumber(parameters.core_risk_fraction ?? parameters.core_risk_percentage) * 100,
       coreAtrMultiplier: parseNumber(parameters.core_atr_multiplier),
       maxCoreExposurePercent: parseNumber(parameters.max_core_exposure) * 100,
+      coreReduceFractionPercent: parseNumber(parameters.core_reduce_fraction) * 100,
       swingRiskPercent: parseNumber(parameters.swing_risk_fraction ?? parameters.swing_risk_percentage) * 100,
       swingAtrMultiplier: parseNumber(parameters.swing_atr_multiplier),
       swingRsiLookback: Number(parameters.swing_rsi_lookback),
       swingRsiEntryLevel: parseNumber(parameters.swing_rsi_entry_level),
       swingRsiExitLevel: parseNumber(parameters.swing_rsi_exit_level),
       swingAverageType: parameters.swing_trend_average || parameters.swing_average_type || 'EMA10',
-      swingCooldownDays: Number(parameters.swing_cooldown_days),
     },
     metrics: {
       totalReturn: parseNumber(response?.total_return),
@@ -371,6 +468,15 @@ export function normalizeBacktestResult(response, fallbackConfig = {}) {
       holdingDays: Number(response?.core_holding_days) || 0,
       entryCount: Number(response?.core_entry_count) || 0,
       exitCount: Number(response?.core_exit_count) || 0,
+      addCount: Number(response?.core_add_count) || 0,
+      reduceCount: Number(response?.core_reduce_count) || 0,
+      fullExitCount: Number(response?.core_full_exit_count) || 0,
+      averageHoldingPeriod: parseNumber(response?.average_core_holding_period),
+      medianHoldingPeriod: parseNumber(response?.median_core_holding_period),
+      averageExposure: parseNumber(response?.average_core_exposure),
+      maxExposure: parseNumber(response?.max_core_exposure),
+      fullExitToNextBuyAverageGap: parseNumber(response?.full_exit_to_next_buy_average_gap),
+      fullExitToNextBuyMinimumGap: Number(response?.full_exit_to_next_buy_minimum_gap) || 0,
     },
     swingMetrics: {
       returnContribution: parseNumber(response?.swing_return_contribution),
@@ -380,7 +486,15 @@ export function normalizeBacktestResult(response, fallbackConfig = {}) {
       entryCount: Number(response?.swing_entry_count) || 0,
       exitCount: Number(response?.swing_exit_count) || 0,
       averageDaysPerCycle: parseNumber(response?.average_days_per_swing_cycle),
+      medianDaysPerCycle: parseNumber(response?.median_days_per_swing_cycle),
+      minimumDaysPerCycle: Number(response?.minimum_days_per_swing_cycle) || 0,
+      maximumDaysPerCycle: Number(response?.maximum_days_per_swing_cycle) || 0,
+      oneBarCycleCount: Number(response?.swing_holding_period_diagnostics?.holding_1_bar_count) || 0,
       profitableCycleCount: Number(response?.profitable_swing_cycle_count) || 0,
+      losingCycleCount: Math.max(
+        (Number(response?.swing_cycle_count) || 0) - (Number(response?.profitable_swing_cycle_count) || 0),
+        0,
+      ),
       winRate: parseNumber(response?.swing_win_rate),
       averageReturn: parseNumber(response?.average_swing_return),
       fees: parseNumber(response?.swing_total_fees ?? response?.swing_fees),
@@ -392,11 +506,12 @@ export function normalizeBacktestResult(response, fallbackConfig = {}) {
       rsi_pullback_detected_days: 0,
       rsi_upward_cross_days: 0,
       close_above_trend_average_days: 0,
-      cooldown_blocked_days: 0,
       swing_entry_signal_count: 0,
       swing_exit_signal_count: 0,
       primary_block_reason_counts: {},
     },
+    swingHoldingPeriodDiagnostics: response?.swing_holding_period_diagnostics || {},
+    coreStrategyDiagnostics: response?.core_strategy_diagnostics || {},
     points,
     trades,
     comparisons,
@@ -419,7 +534,7 @@ function isFiniteMetricSet(metrics) {
 }
 
 function migrateStoredResult(result) {
-  if (![3, 4].includes(result?.schemaVersion)) return result
+  if (![3, 4, 5].includes(result?.schemaVersion)) return result
   const oldConfig = result.config || {}
   const percentageConfig = result.schemaVersion === 3
     ? {
@@ -431,37 +546,40 @@ function migrateStoredResult(result) {
         swingAtrMultiplier: formatMultiplierInput(oldConfig.swingAtrMultiplier, '1.5'),
       }
     : oldConfig
-  const config = {
-    ...defaultBacktestConfig,
-    ...percentageConfig,
-    swingRsiLookback: '5',
-    swingRsiEntryLevel: '40',
-    swingRsiExitLevel: '65',
-    swingAverageType: 'SMA10',
-    swingCooldownDays: '0',
-  }
+  const config = result.schemaVersion === 5
+    ? { ...defaultBacktestConfig, ...percentageConfig }
+    : {
+        ...defaultBacktestConfig,
+        ...percentageConfig,
+        swingRsiLookback: '5',
+        swingRsiEntryLevel: '40',
+        swingRsiExitLevel: '65',
+        swingAverageType: 'SMA10',
+      }
   delete config.coreRiskPercentage
   delete config.maxCoreExposure
   delete config.swingRiskPercentage
+  delete config.swingCooldownDays
+  const parametersUsed = {
+    ...(result.parametersUsed || {}),
+    coreFastMa: Number(config.coreFastMa),
+    coreSlowMa: Number(config.coreSlowMa),
+    coreRiskPercent: Number(config.coreRiskPercent),
+    coreAtrMultiplier: Number(config.coreAtrMultiplier),
+    maxCoreExposurePercent: Number(config.maxCoreExposurePercent),
+    swingRiskPercent: Number(config.swingRiskPercent),
+    swingAtrMultiplier: Number(config.swingAtrMultiplier),
+    swingRsiLookback: Number(config.swingRsiLookback),
+    swingRsiEntryLevel: Number(config.swingRsiEntryLevel),
+    swingRsiExitLevel: Number(config.swingRsiExitLevel),
+    swingAverageType: config.swingAverageType,
+  }
+  delete parametersUsed.swingCooldownDays
   return {
     ...result,
     schemaVersion: backtestResultSchemaVersion,
     config,
-    parametersUsed: {
-      ...(result.parametersUsed || {}),
-      coreFastMa: Number(config.coreFastMa),
-      coreSlowMa: Number(config.coreSlowMa),
-      coreRiskPercent: Number(config.coreRiskPercent),
-      coreAtrMultiplier: Number(config.coreAtrMultiplier),
-      maxCoreExposurePercent: Number(config.maxCoreExposurePercent),
-      swingRiskPercent: Number(config.swingRiskPercent),
-      swingAtrMultiplier: Number(config.swingAtrMultiplier),
-      swingRsiLookback: 5,
-      swingRsiEntryLevel: 40,
-      swingRsiExitLevel: 65,
-      swingAverageType: 'SMA10',
-      swingCooldownDays: 0,
-    },
+    parametersUsed,
     points: (Array.isArray(result.points) ? result.points : []).map((point) => ({
       ...point,
       swingAverage: point.swingAverage ?? point.ma10 ?? null,

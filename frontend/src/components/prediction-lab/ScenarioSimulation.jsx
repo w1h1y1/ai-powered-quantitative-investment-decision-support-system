@@ -7,6 +7,9 @@ function formatSignedPercent(value) {
 }
 
 export default function ScenarioSimulation({ scenarios }) {
+  if (!scenarios.length) {
+    return <section className="prediction-section"><div className="prediction-result-heading"><div><p>Conditional outcomes</p><h2 id="prediction-scenarios-title">Scenario Simulation</h2><span>Not implemented until a real prediction model produces a forecast distribution.</span></div></div></section>
+  }
   return (
     <section className="prediction-section" aria-labelledby="prediction-scenarios-title">
       <div className="prediction-result-heading">
@@ -51,4 +54,3 @@ export default function ScenarioSimulation({ scenarios }) {
     </section>
   )
 }
-

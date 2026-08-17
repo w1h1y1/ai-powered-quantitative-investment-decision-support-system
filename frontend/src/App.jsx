@@ -11,7 +11,6 @@ import MarketAnalysisContent from './components/market-analysis/MarketAnalysisCo
 import PortfolioContent from './components/portfolio/PortfolioContent'
 import WatchlistContent from './components/watchlist/WatchlistContent'
 import { useAuth } from './context/AuthContext'
-import PredictionLabPage from './pages/PredictionLabPage'
 import AuthPage from './pages/AuthPage'
 import { marketAnalysisStocks } from './data/marketAnalysisData'
 import {
@@ -20,18 +19,14 @@ import {
   navigationItems,
   workspaceContent,
 } from './data/mockData'
-
-function normalizePath(pathname) {
-  return pathname.replace(/\/+$/, '') || '/'
-}
+import {
+  isKnownNavigationPath,
+  normalizeNavigationPath as normalizePath,
+  resolveNavigationSection,
+} from './data/navigationRouting'
 
 function getSectionFromLocation(historyState = window.history.state) {
-  const currentPath = normalizePath(window.location.pathname)
-  const routeItem = navigationItems.find((item) => item.path && normalizePath(item.path) === currentPath)
-  if (routeItem) return routeItem.id
-
-  const stateSection = historyState?.section
-  return navigationItems.some((item) => item.id === stateSection) ? stateSection : 'dashboard'
+  return resolveNavigationSection(window.location.pathname, historyState, navigationItems)
 }
 
 function isAuthPath(pathname) {
@@ -117,6 +112,12 @@ export default function App() {
     }
 
     if (isAuthPath(currentPath)) {
+      window.history.replaceState({ section: 'dashboard' }, '', '/')
+      setActiveSection('dashboard')
+      return
+    }
+
+    if (!isKnownNavigationPath(currentPath, navigationItems)) {
       window.history.replaceState({ section: 'dashboard' }, '', '/')
       setActiveSection('dashboard')
     }
@@ -269,8 +270,6 @@ export default function App() {
           <BacktestContent />
         ) : activeNavigationItem.id === 'ai-insights' ? (
           <AIInsightsContent onNavigate={navigateToSection} />
-        ) : activeNavigationItem.id === 'prediction-lab' ? (
-          <PredictionLabPage onNavigate={navigateToSection} onOpenMarketAnalysis={openMarketAnalysis} />
         ) : (
           <WorkspaceContent content={activeContent} />
         )}

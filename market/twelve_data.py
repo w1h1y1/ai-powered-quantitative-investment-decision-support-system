@@ -1,7 +1,7 @@
 import json
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -240,6 +240,12 @@ class TwelveDataClient:
             if interval in INTRADAY_INTERVALS:
                 boundary_time = time(23, 59, 59) if is_end else time(0, 0, 0)
                 return datetime.combine(value, boundary_time).strftime('%Y-%m-%d %H:%M:%S')
+            if interval == '1day' and is_end:
+                # Twelve Data treats a date-only daily end_date as an exclusive
+                # upper boundary. Advance it one day so callers retain inclusive
+                # date-range semantics; downstream filtering still removes bars
+                # after the user's requested end date.
+                return (value + timedelta(days=1)).isoformat()
             return value.isoformat()
 
         return str(value)

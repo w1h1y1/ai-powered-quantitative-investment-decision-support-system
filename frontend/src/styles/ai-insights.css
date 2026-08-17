@@ -97,6 +97,34 @@
   text-transform: uppercase;
 }
 
+.ai-insights-selected-asset {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 9px;
+  color: #697587;
+  background: #f7f8fb;
+  border: 1px solid #edf0f4;
+  border-radius: 8px;
+  font-size: 9px;
+}
+
+.ai-insights-selected-asset strong {
+  color: #354055;
+  font-size: 10px;
+}
+
+.ai-insights-selected-asset span {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  color: #5967d8;
+  background: var(--accent-soft);
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 750;
+}
+
 .ai-insights-field select {
   width: 100%;
   height: 38px;
@@ -327,6 +355,265 @@
   color: #7f8999;
   font-size: 10px;
   line-height: 1.6;
+}
+
+.ai-insights-config-card {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+}
+
+.ai-insights-config-heading p {
+  margin: 0 0 4px;
+  color: #9099a8;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ai-insights-config-heading h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 16px;
+}
+
+.ai-insights-config-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  align-items: end;
+  gap: 14px;
+}
+
+.ai-insights-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.ai-insights-field > span {
+  color: #7f8999;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ai-insights-generate-button {
+  height: 38px;
+  padding: 0 15px;
+  color: #ffffff;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 9px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.ai-insights-generate-button:disabled {
+  color: #a2abb9;
+  background: #eef1f6;
+  border-color: #e3e7ee;
+  cursor: not-allowed;
+}
+
+.ai-insights-config-error {
+  margin: 0;
+  color: #c8465c;
+  font-size: 10px;
+}
+
+.ai-insights-card-heading p {
+  margin: 0 0 4px;
+  color: #9099a8;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ai-insights-card-heading h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 16px;
+}
+
+.ai-insights-card-copy {
+  margin: 12px 0 0;
+  color: #697587;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.ai-insights-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ai-insights-metric {
+  display: grid;
+  gap: 4px;
+  padding: 10px 11px;
+  background: #f7f8fb;
+  border: 1px solid #edf0f4;
+  border-radius: 9px;
+}
+
+.ai-insights-metric > span {
+  overflow: hidden;
+  color: #929baa;
+  font-size: 8px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-insights-metric > strong {
+  color: #354055;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.ai-insights-analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+  align-items: start;
+}
+
+.ai-insights-analysis-grid > .ai-insights-card {
+  margin: 0;
+}
+
+.ai-insights-list-block {
+  margin-top: 12px;
+}
+
+.ai-insights-list-block h3 {
+  margin: 0 0 5px;
+  color: #303b50;
+  font-size: 10px;
+}
+
+.ai-insights-list-block ul,
+.ai-insights-risk-list {
+  display: grid;
+  gap: 5px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.ai-insights-list-block li,
+.ai-insights-risk-list li {
+  position: relative;
+  padding-left: 11px;
+  color: #697587;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.ai-insights-list-block li::before,
+.ai-insights-risk-list li::before {
+  position: absolute;
+  top: 0.55em;
+  left: 0;
+  width: 4px;
+  height: 4px;
+  background: var(--accent);
+  border-radius: 50%;
+  content: '';
+}
+
+.ai-insights-context-line {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.ai-insights-context-line:last-of-type {
+  border-bottom: 0;
+}
+
+.ai-insights-context-line > span {
+  color: #929baa;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.ai-insights-context-line > p {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  color: #697587;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.ai-insights-context-line strong {
+  color: #354055;
+}
+
+.ai-insights-context-line small {
+  color: #8d97a7;
+}
+
+.ai-insights-risk-list li::before {
+  background: #df5c6d;
+}
+
+.ai-insights-metadata {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px 16px;
+  margin-top: 14px;
+  color: #919baa;
+  font-size: 8px;
+  font-weight: 650;
+}
+
+.ai-insights-state-card h2 {
+  margin: 0 0 6px;
+  color: #354055;
+  font-size: 15px;
+}
+
+.ai-insights-state-card p {
+  margin: 0;
+  color: #7e8999;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.ai-insights-state-card[role='alert'] h2 {
+  color: #c8465c;
+}
+
+@media (max-width: 720px) {
+  .ai-insights-config-row,
+  .ai-insights-analysis-grid,
+  .ai-insights-overview-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .ai-insights-overview {

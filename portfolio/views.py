@@ -1,5 +1,6 @@
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, time
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.conf import settings
 from django.db import transaction as db_transaction
@@ -119,12 +120,28 @@ def parse_transaction_date_filter(query_params, field_name):
     return parsed_value
 
 
+def resolve_transaction_filter_timezone(query_params):
+    raw_timezone = str(query_params.get('timezone', '') or '').strip()
+    if not raw_timezone:
+        return timezone.get_current_timezone()
+    try:
+        return ZoneInfo(raw_timezone)
+    except (ZoneInfoNotFoundError, ValueError, TypeError):
+        raise serializers.ValidationError({
+            'timezone': (
+                'Invalid timezone. Use an IANA timezone name such as '
+                'Asia/Shanghai.'
+            ),
+        })
+
+
 def get_transaction_date_range(query_params):
+    filter_timezone = resolve_transaction_filter_timezone(query_params)
     start_date = parse_transaction_date_filter(query_params, 'start_date')
     end_date = parse_transaction_date_filter(query_params, 'end_date')
 
     if start_date is None and end_date is None:
-        today = timezone.localdate()
+        today = timezone.localdate(timezone=filter_timezone)
         start_date = today
         end_date = today
 
@@ -133,14 +150,13 @@ def get_transaction_date_range(query_params):
             'start_date': 'Start date cannot be later than end date.'
         })
 
-    current_timezone = timezone.get_current_timezone()
     start_datetime = (
-        timezone.make_aware(datetime.combine(start_date, time.min), current_timezone)
+        timezone.make_aware(datetime.combine(start_date, time.min), filter_timezone)
         if start_date
         else None
     )
     end_datetime = (
-        timezone.make_aware(datetime.combine(end_date, time.max), current_timezone)
+        timezone.make_aware(datetime.combine(end_date, time.max), filter_timezone)
         if end_date
         else None
     )

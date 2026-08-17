@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import Icon from '../Icon'
+import SecuritySearchSelect from '../security/SecuritySearchSelect'
 import { marketDataApi } from '../../services/marketDataApi'
 import { portfolioApi } from '../../services/portfolioApi'
 import { securityApi } from '../../services/securityApi'
@@ -20,7 +20,6 @@ import {
   buildMarketDataRequestParams,
   createDefaultCustomMarketDataRange,
   dashboardMarketDataRanges,
-  filterSecurityOptions,
   getActiveSecurities,
   getDefaultMarketDataInterval,
   getMarketDataDebugSummary,
@@ -33,6 +32,7 @@ import {
   readStoredSecurityId,
   resolveSelectedSecurityId,
   shouldApplyMarketDataResponse,
+  upsertDashboardSecurity,
   validateCustomMarketDataRange,
   writeStoredSecurityId,
 } from './dashboardSecurityModel'
@@ -57,22 +57,14 @@ function DashboardSecurityState({ actionLabel, children, onAction, tone = '' }) 
 }
 
 function SecuritySelectorPanel({
-  filteredSecurities,
-  onQueryChange,
+  isResolvingSecurity,
+  onSearchResultSelect,
   onSecurityChange,
-  query,
+  resolveError,
   selectedSecurity,
   selectedSecurityId,
   securities,
 }) {
-  const selectOptions = useMemo(() => {
-    if (!selectedSecurity) return filteredSecurities
-    if (filteredSecurities.some((security) => String(security.id) === selectedSecurityId)) {
-      return filteredSecurities
-    }
-    return [selectedSecurity, ...filteredSecurities]
-  }, [filteredSecurities, selectedSecurity, selectedSecurityId])
-
   return (
     <section className="dashboard-panel dashboard-security-panel" aria-labelledby="dashboard-security-title">
       <div className="panel-header dashboard-security-header">
@@ -90,22 +82,21 @@ function SecuritySelectorPanel({
       <div className="dashboard-security-controls">
         <label className="dashboard-security-search">
           <span>Search securities</span>
-          <div>
-            <Icon name="search" />
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => onQueryChange(event.target.value)}
-              placeholder="Search symbol or company"
-              autoComplete="off"
-            />
-          </div>
+          <SecuritySearchSelect
+            id="dashboard-security-search"
+            clearSelectionOnEdit={false}
+            disabled={isResolvingSecurity}
+            localSecurities={securities}
+            selectedSecurity={null}
+            onSelect={onSearchResultSelect}
+          />
+          {resolveError ? <small className="dashboard-security-resolve-error">{resolveError}</small> : null}
         </label>
 
         <label className="dashboard-security-select">
           <span>Selected security</span>
           <select value={selectedSecurityId} onChange={(event) => onSecurityChange(event.target.value)}>
-            {selectOptions.map((security) => (
+            {securities.map((security) => (
               <option key={security.id} value={security.id}>
                 {security.symbol} - {security.name}
               </option>
@@ -138,7 +129,8 @@ function SecuritySelectorPanel({
       </dl>
 
       <p className="dashboard-security-count">
-        Showing {filteredSecurities.length} of {securities.length} active securities from Django.
+        {securities.length} active securities from Django.
+        {' '}Search results may also include verified remote securities.
       </p>
     </section>
   )
@@ -198,9 +190,10 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
   const [customRange, setCustomRange] = useState(() => createDefaultCustomMarketDataRange())
   const [customRangeDraft, setCustomRangeDraft] = useState(() => createDefaultCustomMarketDataRange())
   const [isCustomRangeOpen, setIsCustomRangeOpen] = useState(false)
-  const [securityQuery, setSecurityQuery] = useState('')
   const [isSecurityLoading, setIsSecurityLoading] = useState(true)
   const [securityError, setSecurityError] = useState('')
+  const [isResolvingSecurity, setIsResolvingSecurity] = useState(false)
+  const [securityResolveError, setSecurityResolveError] = useState('')
   const [marketData, setMarketData] = useState(null)
   const [isMarketDataLoading, setIsMarketDataLoading] = useState(false)
   const [marketDataError, setMarketDataError] = useState('')
@@ -347,10 +340,6 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
     () => securities.find((security) => String(security.id) === selectedSecurityId) ?? null,
     [securities, selectedSecurityId],
   )
-  const filteredSecurities = useMemo(
-    () => filterSecurityOptions(securities, securityQuery),
-    [securities, securityQuery],
-  )
   const customRangeMaxDate = getTodayDateInputValue()
   const customRangeDraftError = useMemo(
     () => validateCustomMarketDataRange(customRangeDraft, customRangeMaxDate),
@@ -467,6 +456,32 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
     writeStoredSecurityId(securityId)
   }
 
+  const selectSecuritySearchResult = async (searchResult) => {
+    if (!searchResult || isResolvingSecurity) return
+    setSecurityResolveError('')
+
+    if (searchResult.id) {
+      updateSelectedSecurity(String(searchResult.id))
+      return
+    }
+
+    setIsResolvingSecurity(true)
+    try {
+      const response = await securityApi.resolve(searchResult)
+      const resolvedSecurity = getActiveSecurities([response?.security])[0]
+      if (!resolvedSecurity) throw new Error('The selected security could not be loaded.')
+
+        setSecurities((currentSecurities) => (
+          upsertDashboardSecurity(currentSecurities, resolvedSecurity)
+        ))
+      updateSelectedSecurity(String(resolvedSecurity.id))
+    } catch (error) {
+      setSecurityResolveError(error?.message || 'Unable to add the selected security. Please try again.')
+    } finally {
+      setIsResolvingSecurity(false)
+    }
+  }
+
   const updateCustomRangeDraft = (field, value) => {
     setCustomRangeDraft((currentRange) => ({
       ...currentRange,
@@ -539,10 +554,10 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
         </DashboardSecurityState>
       ) : selectedSecurity ? (
         <SecuritySelectorPanel
-          filteredSecurities={filteredSecurities}
-          onQueryChange={setSecurityQuery}
+          isResolvingSecurity={isResolvingSecurity}
+          onSearchResultSelect={selectSecuritySearchResult}
           onSecurityChange={updateSelectedSecurity}
-          query={securityQuery}
+          resolveError={securityResolveError}
           selectedSecurity={selectedSecurity}
           selectedSecurityId={selectedSecurityId}
           securities={securities}

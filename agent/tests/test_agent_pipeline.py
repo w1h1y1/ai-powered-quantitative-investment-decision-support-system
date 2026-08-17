@@ -1,0 +1,287 @@
+"""P0 end-to-end pipeline integration test.
+
+Verifies:
+    Symbol Resolution -> Unified Agent Context -> Agent Analysis
+
+The external LLM provider and quantitative data providers are mocked, but the
+real symbol resolution, unified context builder, and analysis orchestration are
+executed.
+"""
+
+from datetime import date, timedelta
+from decimal import Decimal
+from unittest.mock import patch
+
+from django.contrib.auth import get_user_model
+from django.test import TestCase
+
+from market.models import Security, SecurityDailyPrice
+
+from agent.agent_analysis_service import run_agent_analysis
+from agent.tests.fakes import FakeProvider
+from agent.unified_context_service import (
+    AGENT_UNIFIED_CONTEXT_VERSION,
+    build_unified_agent_context,
+)
+
+
+def valid_analysis():
+    return {
+        'market_view': {'summary': 'Elevated volatility with mixed direction.'},
+        'technical_view': {'trend': 'Mixed', 'momentum': 'Weak', 'volatility': 'Elevated'},
+        'market_context_view': {
+            'broad_market': 'SPY is sideways.',
+            'sector': 'Sector is sideways.',
+            'confirmation': 'Neutral confirmation.',
+        },
+        'portfolio_view': {'exposure_comment': 'The portfolio holds AAPL.'},
+        'backtest_view': {
+            'summary': 'Positive historical return with drawdown risk.',
+            'strengths': ['Positive return'],
+            'risks': ['Drawdown risk'],
+        },
+        'overall_assessment': 'Elevated volatility dominates.',
+        'risk_factors': ['High volatility'],
+    }
+
+
+def regime_fixture(symbol):
+    if symbol == 'AAPL':
+        return {
+            'symbol': 'AAPL',
+            'latest_market_date': '2026-08-14',
+            'regime_available': True,
+            'regime_unavailable_reason': None,
+            'regime': 'high_volatility',
+            'confidence': 'medium',
+            'confidence_score': 0.614625,
+            'trend': {'direction': 'mixed', 'score': -0.076689, 'adx': 22.21},
+            'range': {'choppiness': 37.59},
+            'momentum': {'rsi': 43.67, 'macd_histogram': -2.65},
+            'volatility': {
+                'atr': 7.86,
+                'atr_percent': 0.025695,
+                'realized_volatility_20d': 0.332236,
+                'volatility_percentile': 0.890873,
+                'percentile_available': True,
+            },
+            'market_context': {
+                'broad_market': 'SPY',
+                'broad_market_context_available': True,
+                'broad_market_context_reason': None,
+                'spy_regime': 'sideways_range',
+                'sector': 'Information Technology',
+                'sector_source': 'symbol_mapping',
+                'sector_benchmark': 'XLK',
+                'sector_context_available': True,
+                'sector_context_reason': None,
+                'sector_regime': 'sideways_range',
+                'confirmation_score': 0.5,
+            },
+            'explanation': ['Deterministic regime explanation.'],
+        }
+    return {
+        'symbol': 'JPM',
+        'latest_market_date': '2026-08-14',
+        'regime_available': True,
+        'regime_unavailable_reason': None,
+        'regime': 'sideways_range',
+        'confidence': 'low',
+        'confidence_score': 0.51,
+        'trend': {'direction': 'bullish', 'score': 0.12, 'adx': 16.06},
+        'range': {'choppiness': 50.0},
+        'momentum': {'rsi': 65.16, 'macd_histogram': 0.05},
+        'volatility': {
+            'atr': 6.33,
+            'atr_percent': 0.0175,
+            'realized_volatility_20d': 0.1782,
+            'volatility_percentile': 0.21,
+            'percentile_available': True,
+        },
+        'market_context': {
+            'broad_market': 'SPY',
+            'broad_market_context_available': True,
+            'broad_market_context_reason': None,
+            'spy_regime': 'sideways_range',
+            'sector': 'Financials',
+            'sector_source': 'symbol_mapping',
+            'sector_benchmark': 'XLF',
+            'sector_context_available': True,
+            'sector_context_reason': None,
+            'sector_regime': 'bullish_trend',
+            'confirmation_score': 0.5,
+        },
+        'explanation': ['Deterministic regime explanation.'],
+    }
+
+
+def backtest_fixture():
+    return {
+        'total_return': '12.407411',
+        'maximum_drawdown': '8.307625',
+        'annualized_volatility': '12.418187',
+        'total_fees': '36.000000',
+        'executed_order_count': 36,
+        'swing_win_rate': '66.666667',
+    }
+
+
+def aapl_portfolio_fixture():
+    return {
+        'available_liquidity': '7004.40',
+        'total_asset_value': '16051.34',
+        'allocations': [{
+            'symbol': 'AAPL',
+            'quantity': '28.000000',
+            'average_price': '434.490000',
+            'current_price': '305.930000',
+            'current_price_as_of': '2026-08-14',
+            'current_price_source': 'database_cache',
+            'current_price_is_stale': False,
+            'market_value': '8566.040000',
+            'unrealized_profit_loss': '-3640.370000',
+            'allocation_percent': '53.000000',
+        }],
+    }
+
+
+def no_position_portfolio_fixture():
+    return {
+        'available_liquidity': '7004.40',
+        'total_asset_value': '16051.34',
+        'allocations': [],
+    }
+
+
+class AgentPipelineIntegrationTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username='agent-pipeline-user',
+            password='password123',
+        )
+        self.securities = {
+            symbol: Security.objects.create(
+                symbol=symbol,
+                name=f'{symbol} Security',
+                asset_type=Security.AssetType.STOCK if symbol != 'SPY' else Security.AssetType.ETF,
+                exchange='NASDAQ' if symbol != 'JPM' else 'NYSE',
+                currency='USD',
+            )
+            for symbol in ('AAPL', 'JPM', 'SPY')
+        }
+        for security in self.securities.values():
+            self.seed_prices(security)
+
+    def seed_prices(self, security):
+        first_date = date(2025, 1, 2)
+        SecurityDailyPrice.objects.bulk_create([
+            SecurityDailyPrice(
+                security=security,
+                date=first_date + timedelta(days=index),
+                open=Decimal('100') + Decimal(index) / Decimal('10'),
+                high=Decimal('101') + Decimal(index) / Decimal('10'),
+                low=Decimal('99') + Decimal(index) / Decimal('10'),
+                close=Decimal('100') + Decimal(index) / Decimal('10'),
+                volume=1000000 + index,
+            )
+            for index in range(240)
+        ])
+
+    def patch_context_dependencies(self, symbol):
+        return (
+            patch(
+                'agent.unified_context_service.get_market_regime',
+                return_value=regime_fixture(symbol),
+            ),
+            patch(
+                'agent.unified_context_service.run_market_regime_core_swing_backtest',
+                return_value=backtest_fixture(),
+            ),
+            patch(
+                'agent.unified_context_service.get_portfolio_summary',
+                return_value=(
+                    aapl_portfolio_fixture()
+                    if symbol == 'AAPL'
+                    else no_position_portfolio_fixture()
+                ),
+            ),
+        )
+
+    def test_aapl_pipeline_preserves_symbol_from_resolution_through_analysis(self):
+        security = self.securities['AAPL']
+        provider = FakeProvider(analysis=valid_analysis())
+
+        patch_regime, patch_backtest, patch_portfolio = self.patch_context_dependencies('AAPL')
+        with patch_regime, patch_backtest, patch_portfolio:
+            context = build_unified_agent_context(security, self.user)
+            response = run_agent_analysis(security, self.user, provider=provider)
+
+        self.assertEqual(context['symbol'], 'AAPL')
+        self.assertEqual(context['context_version'], AGENT_UNIFIED_CONTEXT_VERSION)
+        self.assertEqual(context['security']['sector'], 'Information Technology')
+        self.assertEqual(context['security']['sector_benchmark'], 'XLK')
+        self.assertEqual(context['market_regime']['regime'], 'high_volatility')
+        self.assertEqual(response['symbol'], 'AAPL')
+        self.assertEqual(response['analysis_status'], 'success')
+        self.assertIn('AAPL', provider.last_prompt['user'])
+        self.assertNotIn('JPM', provider.last_prompt['user'])
+
+    def test_aapl_to_jpm_pipeline_has_no_context_leakage(self):
+        aapl_provider = FakeProvider(analysis=valid_analysis())
+        jpm_provider = FakeProvider(analysis=valid_analysis())
+
+        patch_regime, patch_backtest, patch_portfolio = self.patch_context_dependencies('AAPL')
+        with patch_regime, patch_backtest, patch_portfolio:
+            aapl_context = build_unified_agent_context(
+                self.securities['AAPL'],
+                self.user,
+            )
+            run_agent_analysis(
+                self.securities['AAPL'],
+                self.user,
+                provider=aapl_provider,
+            )
+
+        patch_regime, patch_backtest, patch_portfolio = self.patch_context_dependencies('JPM')
+        with patch_regime, patch_backtest, patch_portfolio:
+            jpm_context = build_unified_agent_context(
+                self.securities['JPM'],
+                self.user,
+            )
+            jpm_response = run_agent_analysis(
+                self.securities['JPM'],
+                self.user,
+                provider=jpm_provider,
+            )
+
+        self.assertEqual(aapl_context['symbol'], 'AAPL')
+        self.assertEqual(jpm_context['symbol'], 'JPM')
+        self.assertEqual(jpm_response['symbol'], 'JPM')
+        self.assertIn('JPM', jpm_provider.last_prompt['user'])
+        self.assertNotIn('AAPL', jpm_provider.last_prompt['user'])
+        self.assertNotIn('Apple', jpm_provider.last_prompt['user'])
+        self.assertIn('Financials', jpm_provider.last_prompt['user'])
+
+    def test_llm_cannot_override_django_controlled_facts(self):
+        conflicting_analysis = valid_analysis()
+        conflicting_analysis['market_view']['regime'] = 'bullish_trend'
+        conflicting_analysis['market_view']['direction'] = 'Bullish'
+        conflicting_analysis['portfolio_view']['has_position'] = False
+        conflicting_analysis['backtest_view']['available'] = False
+        conflicting_analysis['symbol'] = 'TSLA'
+        provider = FakeProvider(analysis=conflicting_analysis)
+
+        patch_regime, patch_backtest, patch_portfolio = self.patch_context_dependencies('AAPL')
+        with patch_regime, patch_backtest, patch_portfolio:
+            response = run_agent_analysis(
+                self.securities['AAPL'],
+                self.user,
+                provider=provider,
+            )
+
+        self.assertEqual(response['analysis_status'], 'success')
+        self.assertEqual(response['symbol'], 'AAPL')
+        self.assertEqual(response['analysis']['market_view']['regime'], 'high_volatility')
+        self.assertEqual(response['analysis']['market_view']['direction'], 'Mixed')
+        self.assertTrue(response['analysis']['portfolio_view']['has_position'])
+        self.assertTrue(response['analysis']['backtest_view']['available'])

@@ -25,6 +25,7 @@ import {
   readStoredSecurityId,
   resolveSelectedSecurityId,
   shouldApplyMarketDataResponse,
+  upsertDashboardSecurity,
   validateCustomMarketDataRange,
   zoomDashboardVisibleWindow,
   writeStoredSecurityId,
@@ -66,8 +67,32 @@ test('normalizes API securities and keeps only active records', () => {
     assetType: 'STOCK',
     exchange: 'NASDAQ',
     currency: 'USD',
+    micCode: '',
+    country: '',
     isActive: true,
   }])
+})
+
+test('adds a remotely resolved Security once and keeps the universe sorted', () => {
+  const current = getActiveSecurities([
+    security({ id: 1, symbol: 'AAPL', name: 'Apple Inc.' }),
+    security({ id: 2, symbol: 'MSFT', name: 'Microsoft Corporation' }),
+  ])
+  const jpm = getActiveSecurities([
+    security({
+      id: 13,
+      symbol: 'JPM',
+      name: 'JPMorgan Chase & Co.',
+      exchange: 'NYSE',
+      mic_code: 'XNYS',
+    }),
+  ])[0]
+
+  const added = upsertDashboardSecurity(current, jpm)
+  const reused = upsertDashboardSecurity(added, { ...jpm, name: 'JPMorgan Chase & Co.' })
+
+  assert.deepEqual(added.map((item) => item.symbol), ['AAPL', 'JPM', 'MSFT'])
+  assert.equal(reused.filter((item) => item.id === 13).length, 1)
 })
 
 test('filters securities by symbol or company name', () => {
