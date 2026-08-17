@@ -1,5 +1,6 @@
 .venv/
 venv/
+staticfiles/
 __pycache__/
 **pycache**/
 *.py[cod]
