@@ -63,7 +63,6 @@ const popularDashboardSecurities = [
     symbol: 'AAPL',
     name: 'Apple Inc.',
     exchange: 'NASDAQ',
-    mic_code: 'XNAS',
     instrument_type: 'Common Stock',
     country: 'United States',
     currency: 'USD',
@@ -72,7 +71,6 @@ const popularDashboardSecurities = [
     symbol: 'MSFT',
     name: 'Microsoft Corporation',
     exchange: 'NASDAQ',
-    mic_code: 'XNAS',
     instrument_type: 'Common Stock',
     country: 'United States',
     currency: 'USD',
@@ -81,7 +79,6 @@ const popularDashboardSecurities = [
     symbol: 'NVDA',
     name: 'NVIDIA Corporation',
     exchange: 'NASDAQ',
-    mic_code: 'XNAS',
     instrument_type: 'Common Stock',
     country: 'United States',
     currency: 'USD',
@@ -553,7 +550,10 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
 
     setIsResolvingSecurity(true)
     try {
-      const response = await securityApi.resolve(searchResult)
+      const response = await securityApi.resolve({
+        ...searchResult,
+        search_query: searchResult.search_query || searchResult.symbol,
+      })
       const resolvedSecurity = getActiveSecurities([response?.security])[0]
         ?? normalizeSecurity(response?.security)
       if (!resolvedSecurity) throw new Error('The selected security could not be loaded.')
