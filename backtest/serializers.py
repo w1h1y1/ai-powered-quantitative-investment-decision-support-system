@@ -3,6 +3,7 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from market.models import Security
+from market.regime_service import ensure_benchmark_security
 from market.serializers import SecuritySelectionSerializer
 from market.services import SecuritySelectionValidationError, resolve_security_selection
 
@@ -79,12 +80,7 @@ class StrategyEvaluationSerializer(serializers.Serializer):
         if security is None:
             raise serializers.ValidationError({'symbol': 'Security is not available.'})
 
-        benchmark = (
-            Security.objects
-            .filter(symbol=attrs['benchmark'], is_active=True)
-            .order_by('-country', 'mic_code', 'exchange', 'id')
-            .first()
-        )
+        benchmark = ensure_benchmark_security(attrs['benchmark'])
         if benchmark is None:
             raise serializers.ValidationError({
                 'benchmark': 'Benchmark security must exist in the system.',
@@ -261,12 +257,7 @@ class BacktestRunSerializer(serializers.Serializer):
             raise serializers.ValidationError({'core_fast_ma': 'Core fast MA must be smaller than Core slow MA.'})
 
         benchmark_symbol = str(attrs.get('benchmark', 'SPY')).strip().upper()
-        benchmark = (
-            Security.objects
-            .filter(symbol=benchmark_symbol, is_active=True)
-            .order_by('-country', 'mic_code', 'exchange', 'id')
-            .first()
-        )
+        benchmark = ensure_benchmark_security(benchmark_symbol)
         if benchmark is None:
             raise serializers.ValidationError({
                 'benchmark': 'Benchmark security must exist in the system.',

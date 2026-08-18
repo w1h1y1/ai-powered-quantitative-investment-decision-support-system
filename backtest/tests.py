@@ -1108,7 +1108,7 @@ class MarketRegimeBacktestApiTests(APITestCase):
         self.assertEqual(response.data['data_source']['source'], 'database_cache')
 
     def test_missing_benchmark_security_returns_clear_400(self):
-        response = self.run_backtest(benchmark='QQQ')
+        response = self.run_backtest(benchmark='ZZZZ')
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data['benchmark'][0], 'Benchmark security must exist in the system.')

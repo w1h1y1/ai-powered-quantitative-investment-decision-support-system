@@ -168,6 +168,20 @@ export default function BacktestContent() {
       .then((payload) => {
         if (!ignore && sectorContextRequestIdRef.current === requestId) {
           setSectorContext(payload)
+          const benchmarkAssets = (Array.isArray(payload?.benchmarks) ? payload.benchmarks : [])
+            .map((security) => normalizeSecuritySearchOption(security))
+            .filter(Boolean)
+          if (benchmarkAssets.length) {
+            setAssets((currentAssets) => {
+              const mergedAssets = [...currentAssets]
+              benchmarkAssets.forEach((benchmark) => {
+                if (!mergedAssets.some((asset) => asset.symbol === benchmark.symbol)) {
+                  mergedAssets.push(benchmark)
+                }
+              })
+              return mergedAssets
+            })
+          }
         }
       })
       .catch(() => {

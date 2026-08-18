@@ -169,6 +169,7 @@ SECURITY_SECTOR_MAP = {
 
 BENCHMARK_SECURITY_METADATA = {
     'SPY': {'name': 'SPDR S&P 500 ETF Trust', 'exchange': 'NYSEARCA', 'mic_code': 'ARCX'},
+    'QQQ': {'name': 'Invesco QQQ ETF', 'exchange': 'NASDAQ', 'mic_code': 'XNAS'},
     'XLK': {'name': 'Technology Select Sector SPDR Fund', 'exchange': 'NYSEARCA', 'mic_code': 'ARCX'},
     'XLF': {'name': 'Financial Select Sector SPDR Fund', 'exchange': 'NYSEARCA', 'mic_code': 'ARCX'},
     'XLV': {'name': 'Health Care Select Sector SPDR Fund', 'exchange': 'NYSEARCA', 'mic_code': 'ARCX'},

@@ -31,6 +31,7 @@ import {
   normalizeHoldingsToDashboardSecurities,
   normalizeMarketData,
   normalizeMarketSummary,
+  normalizeSecurity,
   readStoredSecurityId,
   resolveSelectedSecurityId,
   shouldApplyMarketDataResponse,
@@ -473,11 +474,12 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
     try {
       const response = await securityApi.resolve(searchResult)
       const resolvedSecurity = getActiveSecurities([response?.security])[0]
+        ?? normalizeSecurity(response?.security)
       if (!resolvedSecurity) throw new Error('The selected security could not be loaded.')
 
-        setSecurities((currentSecurities) => (
-          upsertDashboardSecurity(currentSecurities, resolvedSecurity)
-        ))
+      setSecurities((currentSecurities) => (
+        upsertDashboardSecurity(currentSecurities, { ...resolvedSecurity, isActive: true })
+      ))
       updateSelectedSecurity(String(resolvedSecurity.id))
     } catch (error) {
       setSecurityResolveError(error?.message || 'Unable to add the selected security. Please try again.')

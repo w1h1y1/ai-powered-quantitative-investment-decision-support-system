@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 
 from .models import Security
 from .regime_config import (
+    BENCHMARK_SECURITY_METADATA,
     BROAD_MARKET_SYMBOL,
     get_backtest_benchmark_options,
     get_sector_benchmark,
@@ -16,6 +17,7 @@ from .regime_config import (
 from .regime_service import (
     MarketRegimeDataRateLimited,
     MarketRegimeDataUnavailable,
+    ensure_benchmark_security,
     get_market_regime,
 )
 from .serializers import (
@@ -95,13 +97,21 @@ class SecurityViewSet(viewsets.ReadOnlyModelViewSet):
         security = self.get_object()
         sector, sector_source = get_security_sector(security)
         sector_benchmark = get_sector_benchmark(sector)
+        allowed_benchmarks = get_backtest_benchmark_options(security)
+        benchmarks = []
+        for benchmark_symbol in allowed_benchmarks:
+            benchmark_security = ensure_benchmark_security(benchmark_symbol)
+            if benchmark_security is None:
+                continue
+            benchmarks.append(SecuritySerializer(benchmark_security).data)
         return Response({
             'symbol': security.symbol,
             'sector': sector,
             'sector_source': sector_source,
             'sector_benchmark': sector_benchmark,
             'broad_market': BROAD_MARKET_SYMBOL,
-            'allowed_benchmarks': get_backtest_benchmark_options(security),
+            'allowed_benchmarks': allowed_benchmarks,
+            'benchmarks': benchmarks,
         })
 
 
