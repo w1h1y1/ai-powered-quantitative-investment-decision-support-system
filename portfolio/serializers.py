@@ -5,7 +5,7 @@ from rest_framework import serializers
 from market.models import Security
 from market.serializers import SecuritySummarySerializer
 
-from .models import Holding, Portfolio, TradeTransaction
+from .models import Holding, Portfolio, PortfolioCashFlow, TradeTransaction
 
 
 ZERO = Decimal('0')
@@ -26,6 +26,21 @@ class PortfolioSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = ['id', 'initial_balance', 'created_at', 'updated_at']
+
+
+class PortfolioCashFlowSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PortfolioCashFlow
+        fields = [
+            'id',
+            'flow_type',
+            'amount',
+            'effective_date',
+            'note',
+            'is_estimated',
+            'created_at',
+        ]
+        read_only_fields = ['id', 'is_estimated', 'created_at']
 
 
 class UserPortfolioRelatedField(serializers.PrimaryKeyRelatedField):

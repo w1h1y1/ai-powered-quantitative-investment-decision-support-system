@@ -5,6 +5,7 @@ import { securityApi } from '../../services/securityApi'
 import { transactionApi } from '../../services/transactionApi'
 import AssetAllocation from './AssetAllocation'
 import HoldingsTable from './HoldingsTable'
+import FundingPanel from './FundingPanel'
 import PortfolioOverview from './PortfolioOverview'
 import PortfolioPerformanceChart from './PortfolioPerformanceChart'
 import RecentTransactions from './RecentTransactions'
@@ -508,6 +509,11 @@ export default function PortfolioContent({ onViewAnalysis }) {
       </section>
 
       <PortfolioOverview summary={portfolio.summary} />
+
+      <FundingPanel
+        onRefresh={refreshPortfolioSections}
+        remainingLiquidity={portfolio.summary.availableFunds}
+      />
 
       <div className="portfolio-analytics-grid">
         <PortfolioPerformanceChart

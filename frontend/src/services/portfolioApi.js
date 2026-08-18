@@ -20,6 +20,20 @@ export const portfolioApi = {
     }
     return portfolioSummaryRequestPromise
   },
+  funding() {
+    return apiRequest('/api/portfolio/funding/', { cache: 'no-store' })
+  },
+  createFunding(payload) {
+    return apiRequest('/api/portfolio/funding/', {
+      method: 'POST',
+      body: {
+        flow_type: payload.flow_type,
+        amount: payload.amount,
+        transaction_date: payload.transaction_date,
+        note: payload.note,
+      },
+    })
+  },
   performance(range, options = {}) {
     const path = buildPortfolioPerformancePath(range, options.refresh)
     if (!portfolioPerformanceRequestPromises.has(path)) {

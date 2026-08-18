@@ -1,4 +1,4 @@
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import datetime, time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -20,21 +20,25 @@ from watchlist.services import (
     get_verified_search_item,
 )
 
-from .models import Holding, Portfolio, TradeTransaction
+from .models import Holding, Portfolio, PortfolioCashFlow, TradeTransaction
 from .serializers import (
     HoldingSerializer,
+    PortfolioCashFlowSerializer,
     PortfolioSerializer,
     TradeTransactionSerializer,
 )
 from .services import (
     UnsupportedPortfolioPerformanceRange,
+    PortfolioFundingValidationError,
     PortfolioTransactionUndoError,
     calculate_sell_realized_profit_loss,
     get_or_create_primary_portfolio,
+    get_portfolio_funding_transactions,
     get_portfolio_summary,
     get_portfolio_performance,
     get_primary_portfolio,
     invalidate_portfolio_performance_cache,
+    record_portfolio_funding,
     reset_test_portfolio_for_user,
     undo_trade_transaction_for_user,
 )
@@ -98,6 +102,82 @@ class PortfolioPerformanceView(APIView):
             ))
         except UnsupportedPortfolioPerformanceRange as exc:
             return Response({'range': str(exc)}, status=400)
+
+
+class PortfolioFundingView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        cash_flows = get_portfolio_funding_transactions(request.user)
+        serializer = PortfolioCashFlowSerializer(cash_flows, many=True)
+        return Response({
+            'funding_transactions': serializer.data,
+            'portfolio_summary': get_portfolio_summary(request.user),
+        })
+
+    def post(self, request):
+        flow_type = str(request.data.get('flow_type', '')).strip().upper()
+        raw_amount = request.data.get('amount')
+        note = str(request.data.get('note', '') or '').strip()
+
+        try:
+            amount = Decimal(str(raw_amount))
+        except (TypeError, ValueError, InvalidOperation):
+            return Response(
+                {'amount': 'Enter a valid amount greater than 0.'},
+                status=400,
+            )
+
+        effective_date = self._parse_funding_date(request.data)
+        if effective_date is None:
+            return Response(
+                {'transaction_date': 'Use YYYY-MM-DD date format.'},
+                status=400,
+            )
+
+        try:
+            portfolio, cash_flow = record_portfolio_funding(
+                request.user,
+                flow_type,
+                amount,
+                note=note,
+                effective_date=effective_date,
+            )
+        except PortfolioFundingValidationError as exc:
+            return Response({'detail': str(exc)}, status=400)
+
+        cash_flow_serializer = PortfolioCashFlowSerializer(cash_flow)
+        return Response({
+            'funding_transaction': cash_flow_serializer.data,
+            'portfolio_summary': get_portfolio_summary(request.user),
+        }, status=201)
+
+    def _parse_funding_date(self, data):
+        raw_effective_date = str(data.get('effective_date', '') or '').strip()
+        if raw_effective_date:
+            try:
+                parsed_effective_date = datetime.fromisoformat(raw_effective_date)
+            except (TypeError, ValueError):
+                parsed_effective_date = None
+            if parsed_effective_date is not None:
+                if timezone.is_naive(parsed_effective_date):
+                    return timezone.make_aware(
+                        parsed_effective_date,
+                        timezone.get_current_timezone(),
+                    )
+                return parsed_effective_date
+
+        raw_transaction_date = str(data.get('transaction_date', '') or '').strip()
+        if raw_transaction_date:
+            parsed_date = parse_date(raw_transaction_date)
+            if parsed_date is None:
+                return None
+            return timezone.make_aware(
+                datetime.combine(parsed_date, time.min),
+                timezone.get_current_timezone(),
+            )
+
+        return timezone.now()
 
 
 def parse_refresh_flag(request):

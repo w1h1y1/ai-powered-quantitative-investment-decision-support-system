@@ -56,6 +56,10 @@ class PortfolioTransactionUndoError(Exception):
     pass
 
 
+class PortfolioFundingValidationError(Exception):
+    pass
+
+
 def get_primary_portfolio(user):
     if not user or not user.is_authenticated:
         return None
@@ -85,6 +89,129 @@ def create_initial_cash_flow(portfolio, amount, *, is_estimated=False, note=''):
         ),
         is_estimated=is_estimated,
     )
+
+
+def get_portfolio_funding_transactions(user):
+    portfolio = get_primary_portfolio(user)
+    if portfolio is None:
+        return []
+    return list(
+        PortfolioCashFlow.objects
+        .filter(portfolio=portfolio)
+        .order_by('-effective_date', '-id')
+    )
+
+
+def record_portfolio_funding(user, flow_type, amount, *, note='', effective_date=None):
+    normalized_flow_type = str(flow_type or '').strip().upper()
+    if normalized_flow_type == 'INITIAL_DEPOSIT':
+        normalized_flow_type = PortfolioCashFlow.FlowType.INITIAL
+    elif normalized_flow_type == 'DEPOSIT':
+        normalized_flow_type = PortfolioCashFlow.FlowType.DEPOSIT
+    elif normalized_flow_type == 'WITHDRAWAL':
+        normalized_flow_type = PortfolioCashFlow.FlowType.WITHDRAWAL
+    else:
+        raise PortfolioFundingValidationError(
+            'Use Initial Deposit, Deposit, or Withdrawal.'
+        )
+
+    amount = quantize_decimal(amount or ZERO, MONEY_QUANT)
+    if amount <= ZERO:
+        raise PortfolioFundingValidationError('Amount must be greater than 0.')
+
+    if effective_date is None:
+        effective_date = timezone.now()
+    elif timezone.is_naive(effective_date):
+        effective_date = timezone.make_aware(effective_date, timezone.get_current_timezone())
+
+    with transaction.atomic():
+        portfolio, _ = get_or_create_primary_portfolio(user)
+        portfolio = (
+            Portfolio.objects
+            .select_for_update()
+            .get(pk=portfolio.pk, user=user)
+        )
+
+        if normalized_flow_type == PortfolioCashFlow.FlowType.INITIAL:
+            has_trades = TradeTransaction.objects.filter(portfolio=portfolio).exists()
+            has_other_flows = (
+                PortfolioCashFlow.objects
+                .filter(portfolio=portfolio)
+                .exclude(flow_type=PortfolioCashFlow.FlowType.INITIAL)
+                .exists()
+            )
+            if has_trades or has_other_flows:
+                raise PortfolioFundingValidationError(
+                    'Initial deposit already recorded. Use a deposit instead.'
+                )
+
+            initial_flow = (
+                PortfolioCashFlow.objects
+                .filter(portfolio=portfolio, flow_type=PortfolioCashFlow.FlowType.INITIAL)
+                .order_by('id')
+                .first()
+            )
+            if initial_flow is not None and initial_flow.amount > ZERO:
+                raise PortfolioFundingValidationError(
+                    'Initial deposit already recorded. Use a deposit instead.'
+                )
+
+            if initial_flow is None:
+                cash_flow = create_initial_cash_flow(
+                    portfolio,
+                    amount,
+                    note=note or 'Initial deposit',
+                )
+            else:
+                initial_flow.amount = amount
+                initial_flow.note = note or initial_flow.note
+                initial_flow.effective_date = effective_date
+                initial_flow.is_estimated = False
+                initial_flow.save(update_fields=[
+                    'amount',
+                    'note',
+                    'effective_date',
+                    'is_estimated',
+                ])
+                cash_flow = initial_flow
+
+            portfolio.initial_balance = amount
+            portfolio.available_funds = amount
+        elif normalized_flow_type == PortfolioCashFlow.FlowType.DEPOSIT:
+            cash_flow = PortfolioCashFlow.objects.create(
+                portfolio=portfolio,
+                flow_type=PortfolioCashFlow.FlowType.DEPOSIT,
+                amount=amount,
+                effective_date=effective_date,
+                note=note,
+                is_estimated=False,
+            )
+            portfolio.available_funds = quantize_decimal(
+                (portfolio.available_funds or ZERO) + amount,
+                MONEY_QUANT,
+            )
+        else:
+            available_liquidity = portfolio.available_funds or ZERO
+            if amount > available_liquidity:
+                raise PortfolioFundingValidationError(
+                    'Withdrawal amount cannot exceed available cash.'
+                )
+            cash_flow = PortfolioCashFlow.objects.create(
+                portfolio=portfolio,
+                flow_type=PortfolioCashFlow.FlowType.WITHDRAWAL,
+                amount=amount,
+                effective_date=effective_date,
+                note=note,
+                is_estimated=False,
+            )
+            portfolio.available_funds = quantize_decimal(
+                available_liquidity - amount,
+                MONEY_QUANT,
+            )
+
+        portfolio.save(update_fields=['available_funds', 'initial_balance', 'updated_at'])
+        invalidate_portfolio_performance_cache(portfolio)
+        return portfolio, cash_flow
 
 
 def get_or_create_primary_portfolio(user, defaults=None):

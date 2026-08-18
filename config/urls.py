@@ -35,6 +35,7 @@ from market.views import (
     StrategySelectionView,
 )
 from portfolio.views import (
+    PortfolioFundingView,
     HoldingViewSet,
     PortfolioPerformanceView,
     PortfolioResetTestDataView,
@@ -70,6 +71,7 @@ urlpatterns = [
     path('api/market-data/daily/', SecurityDailyMarketDataView.as_view(), name='market-data-daily'),
     path('api/portfolio/summary/', PortfolioSummaryView.as_view(), name='portfolio-summary'),
     path('api/portfolio/performance/', PortfolioPerformanceView.as_view(), name='portfolio-performance'),
+    path('api/portfolio/funding/', PortfolioFundingView.as_view(), name='portfolio-funding'),
     path('api/portfolio/reset-test-data/', PortfolioResetTestDataView.as_view(), name='portfolio-reset-test-data'),
     path('api/watchlist/summary/', WatchlistSummaryView.as_view(), name='watchlist-summary'),
     path('api/watchlist/add-symbol/', WatchlistAddSymbolView.as_view(), name='watchlist-add-symbol'),

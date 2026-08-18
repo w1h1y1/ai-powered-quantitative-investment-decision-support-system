@@ -1808,3 +1808,99 @@
     width: 100%;
   }
 }
+
+.portfolio-funding-card {
+  border-radius: 16px;
+  padding: 18px;
+}
+
+.portfolio-funding-balance {
+  display: grid;
+  gap: 4px;
+  text-align: right;
+}
+
+.portfolio-funding-balance span {
+  color: #9099a8;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.portfolio-funding-balance strong {
+  color: #263147;
+  font-size: 18px;
+}
+
+.portfolio-funding-form {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.portfolio-funding-form label {
+  display: grid;
+  gap: 5px;
+  color: #8c96a7;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.portfolio-funding-form input,
+.portfolio-funding-form select {
+  min-height: 32px;
+  color: #445066;
+  background: #ffffff;
+  border: 1px solid #e1e6ef;
+  border-radius: 7px;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.portfolio-funding-form input {
+  padding: 0 8px;
+}
+
+.portfolio-funding-form select {
+  min-width: 130px;
+  padding: 0 7px;
+}
+
+.portfolio-funding-note {
+  min-width: 180px;
+  flex: 1 1 180px;
+}
+
+.portfolio-funding-form button {
+  min-height: 32px;
+  padding: 0 14px;
+  color: #ffffff;
+  background: #6877f5;
+  border: 0;
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.portfolio-funding-form button:hover {
+  background: #5666e8;
+}
+
+.portfolio-funding-form button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.portfolio-funding-results {
+  margin-top: 14px;
+}
+
+.portfolio-funding-results.is-loading {
+  opacity: 0.78;
+}
