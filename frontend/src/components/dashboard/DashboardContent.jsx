@@ -129,10 +129,8 @@ function PopularSecurityChips({ onSelect }) {
 function SecuritySelectorPanel({
   isResolvingSecurity,
   onSearchResultSelect,
-  onSecurityChange,
   resolveError,
   selectedSecurity,
-  selectedSecurityId,
   securities,
 }) {
   return (
@@ -163,16 +161,6 @@ function SecuritySelectorPanel({
           {resolveError ? <small className="dashboard-security-resolve-error">{resolveError}</small> : null}
         </label>
 
-        <label className="dashboard-security-select">
-          <span>Selected security</span>
-          <select value={selectedSecurityId} onChange={(event) => onSecurityChange(event.target.value)}>
-            {securities.map((security) => (
-              <option key={security.id} value={security.id}>
-                {security.symbol} - {security.name}
-              </option>
-            ))}
-          </select>
-        </label>
       </div>
 
       <PopularSecurityChips onSelect={onSearchResultSelect} />
@@ -257,6 +245,7 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
   const [securities, setSecurities] = useState([])
   const [selectedSecurityId, setSelectedSecurityId] = useState(() => readStoredSecurityId())
   const [selectedSecurity, setSelectedSecurity] = useState(null)
+  const hasUserSelectedSecurityRef = useRef(false)
   const [selectedRange, setSelectedRange] = useState('6M')
   const [selectedInterval, setSelectedInterval] = useState(() => getDefaultMarketDataInterval('6M'))
   const [customRange, setCustomRange] = useState(() => createDefaultCustomMarketDataRange())
@@ -382,7 +371,7 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
     try {
       const response = await holdingApi.list()
       const nextSecurities = normalizeHoldingsToDashboardSecurities(response)
-      if (!nextSecurities.length) {
+      if (!nextSecurities.length && !hasUserSelectedSecurityRef.current) {
         const resolvedResponse = await securityApi.resolve(popularDashboardSecurities[0])
         const defaultSecurity = normalizeSecurity(resolvedResponse?.security)
         if (defaultSecurity?.id) {
@@ -409,6 +398,11 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
 
   useEffect(() => {
     if (isSecurityLoading || securityError) return
+    if (selectedSecurity) {
+      writeStoredSecurityId(String(selectedSecurity.id))
+      return
+    }
+    if (hasUserSelectedSecurityRef.current) return
 
     const resolvedSecurityId = resolveSelectedSecurityId({
       securities,
@@ -422,7 +416,7 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
       securities.find((security) => String(security.id) === resolvedSecurityId) ?? null,
     )
     writeStoredSecurityId(resolvedSecurityId)
-  }, [isSecurityLoading, securities, securityError, selectedSecurityId])
+  }, [isSecurityLoading, securities, securityError, selectedSecurity, selectedSecurityId])
 
   const customRangeMaxDate = getTodayDateInputValue()
   const customRangeDraftError = useMemo(
@@ -536,6 +530,7 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
   )
 
   const updateSelectedSecurity = (securityId) => {
+    hasUserSelectedSecurityRef.current = true
     setSelectedSecurityId(securityId)
     setSelectedSecurity(
       securities.find((security) => String(security.id) === String(securityId)) ?? null,
@@ -549,6 +544,7 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
   const selectSecuritySearchResult = async (searchResult) => {
     if (!searchResult || isResolvingSecurity) return
     setSecurityResolveError('')
+    hasUserSelectedSecurityRef.current = true
 
     if (searchResult.id) {
       updateSelectedSecurity(String(searchResult.id))
@@ -648,10 +644,8 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
         <SecuritySelectorPanel
           isResolvingSecurity={isResolvingSecurity}
           onSearchResultSelect={selectSecuritySearchResult}
-          onSecurityChange={updateSelectedSecurity}
           resolveError={securityResolveError}
           selectedSecurity={selectedSecurity}
-          selectedSecurityId={selectedSecurityId}
           securities={securities}
         />
       ) : (
