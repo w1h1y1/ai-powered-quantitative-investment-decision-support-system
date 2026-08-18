@@ -76,6 +76,35 @@ function Metric({ label, value }) {
   )
 }
 
+export function DecisionSummaryCard({ analysis }) {
+  const decision = analysis.decision_summary || {}
+  return (
+    <SectionCard eyebrow="Decision" title="AI Decision Summary">
+      <div className="ai-insights-decision-grid">
+        <Metric label="Stance" value={decision.stance || '—'} />
+        <Metric label="Confidence" value={decision.confidence || '—'} />
+        <Metric label="Suggested Approach" value={decision.suggested_approach || '—'} />
+        <Metric label="Suitable Strategy" value={decision.suitable_strategy || '—'} />
+        <Metric label="Time Horizon" value={decision.time_horizon || '—'} />
+      </div>
+      {decision.key_reasons?.length ? (
+        <div className="ai-insights-decision-reasons">
+          <h3>Key Reasons</h3>
+          <ul>
+            {decision.key_reasons.map((reason) => <li key={reason}>{reason}</li>)}
+          </ul>
+        </div>
+      ) : null}
+      {decision.main_risk ? (
+        <div className="ai-insights-main-risk">
+          <h3>Main Risk</h3>
+          <p>{decision.main_risk}</p>
+        </div>
+      ) : null}
+    </SectionCard>
+  )
+}
+
 export function OverviewCard({ analysis, metadata }) {
   return (
     <SectionCard eyebrow="Summary" title="Analysis Overview">
@@ -223,6 +252,7 @@ function getErrorMessage(error) {
 export default function AIInsightsContent() {
   const [securities, setSecurities] = useState([])
   const [isSecuritiesLoading, setIsSecuritiesLoading] = useState(true)
+  const [isResolvingAsset, setIsResolvingAsset] = useState(false)
   const [securitiesError, setSecuritiesError] = useState('')
   const [selectedSymbol, setSelectedSymbol] = useState('')
   const [analysis, setAnalysis] = useState(null)
@@ -262,13 +292,34 @@ export default function AIInsightsContent() {
     [securities, selectedSymbol],
   )
 
-  const selectAsset = (asset) => {
+  const selectAsset = async (asset) => {
     const symbol = asset?.symbol ?? ''
+    if (!symbol) return
     setSelectedSymbol(symbol)
     setAnalysis(null)
     setAnalysisUnavailable('')
     setError('')
     requestIdRef.current += 1
+    if (asset.id) return
+
+    setIsResolvingAsset(true)
+    try {
+      const response = await securityApi.resolve(asset)
+      const resolved = normalizeSecuritySearchOption(response?.security)
+      if (!resolved) {
+        setSecuritiesError('Unable to resolve the selected security.')
+        return
+      }
+      setSecurities((current) => [
+        ...current.filter((item) => item.symbol !== resolved.symbol),
+        resolved,
+      ])
+      setSelectedSymbol(resolved.symbol)
+    } catch (error) {
+      setSecuritiesError(error?.message || 'Unable to resolve the selected security.')
+    } finally {
+      setIsResolvingAsset(false)
+    }
   }
 
   const generateAnalysis = (event) => {
@@ -332,7 +383,7 @@ export default function AIInsightsContent() {
               localSecurities={securities}
               selectedSecurity={selectedAsset}
               onSelect={selectAsset}
-              disabled={isSecuritiesLoading || isLoading}
+            disabled={isSecuritiesLoading || isLoading || isResolvingAsset}
               clearSelectionOnEdit={false}
             />
             {selectedAsset && (
@@ -345,7 +396,7 @@ export default function AIInsightsContent() {
           <button
             className="ai-insights-generate-button"
             type="button"
-            disabled={!selectedSymbol || isLoading || isSecuritiesLoading}
+            disabled={!selectedSymbol || isLoading || isSecuritiesLoading || isResolvingAsset}
             onClick={generateAnalysis}
           >
             {isLoading ? 'Analyzing...' : 'Generate AI Analysis'}
@@ -363,6 +414,7 @@ export default function AIInsightsContent() {
           <ErrorState message={error} />
         ) : analysis ? (
           <>
+            <DecisionSummaryCard analysis={analysis} />
             <OverviewCard analysis={analysis} metadata={analysis.metadata} />
             <div className="ai-insights-analysis-grid">
               <MarketViewCard analysis={analysis} />

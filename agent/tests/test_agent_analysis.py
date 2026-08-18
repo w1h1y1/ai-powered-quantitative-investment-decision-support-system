@@ -97,6 +97,22 @@ class AgentAnalysisServiceTests(SimpleTestCase):
         self.assertIn('overall_assessment', response['analysis'])
         self.assertIn('risk_factors', response['analysis'])
 
+    def test_structured_decision_summary_is_injected(self):
+        response, _ = self.run_with_context(
+            FakeProvider(analysis=valid_analysis()),
+        )
+
+        summary = response['analysis']['decision_summary']
+        self.assertIn('stance', summary)
+        self.assertIn('confidence', summary)
+        self.assertIn('suggested_approach', summary)
+        self.assertIn('suitable_strategy', summary)
+        self.assertIn('time_horizon', summary)
+        self.assertIn('key_reasons', summary)
+        self.assertIn('main_risk', summary)
+        self.assertEqual(summary['suitable_strategy'], 'Reduced Exposure / Wait')
+        self.assertEqual(summary['time_horizon'], 'Short Term')
+
     def test_django_controls_facts_and_drops_advice_fields(self):
         data = valid_analysis()
         data['market_view']['regime'] = 'bullish_trend'

@@ -93,6 +93,186 @@ def has_open_close_direction_contradiction(analysis, context):
     return any(phrase in text for phrase in forbidden)
 
 
+def _as_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _decision_stance(direction, price_vs_ma20, macd_histogram, regime):
+    if regime == 'high_volatility':
+        if direction == 'Bullish' and (price_vs_ma20 or 0) > 0 and (macd_histogram or 0) > 0:
+            return 'Cautious Bullish'
+        return 'Cautious'
+    if direction == 'Bullish':
+        if (price_vs_ma20 or 0) > 0 and (macd_histogram or 0) > 0:
+            return 'Bullish'
+        return 'Cautious Bullish'
+    if direction == 'Bearish':
+        return 'Bearish'
+    if regime == 'sideways_range':
+        return 'Neutral'
+    return 'Neutral'
+
+
+def _decision_confidence(context, analysis):
+    market_regime = context.get('market_regime') or {}
+    technical = context.get('technical_analysis') or {}
+    market_context = context.get('market_context') or {}
+    backtest = context.get('backtest_context') or {}
+    confirmation = market_context.get('confirmation') or {}
+    volatility = market_regime.get('volatility') or {}
+    available_sources = sum([
+        market_regime.get('available') is True,
+        technical.get('available') is True,
+        backtest.get('available') is True,
+        (market_context.get('broad_market') or {}).get('available') is True,
+    ])
+    percentile = _as_float(volatility.get('volatility_percentile'))
+    if confirmation.get('level') == 'Weak' or available_sources < 2:
+        return 'Low'
+    if percentile is not None and percentile >= 0.85:
+        return 'Medium'
+    if confirmation.get('level') == 'Strong' and available_sources >= 3:
+        return 'High'
+    return 'Medium'
+
+
+def _decision_key_reasons(context, analysis):
+    regime = (context.get('market_regime') or {}).get('regime')
+    direction = (context.get('market_regime') or {}).get('direction')
+    technical = context.get('technical_analysis') or {}
+    moving_averages = technical.get('moving_averages') or {}
+    momentum = technical.get('momentum') or {}
+    backtest = context.get('backtest_context') or {}
+    portfolio = context.get('portfolio_context') or {}
+    market_context = context.get('market_context') or {}
+    broad = market_context.get('broad_market') or {}
+    sector = market_context.get('sector') or {}
+    reasons = []
+
+    price_vs_ma20 = _as_float(moving_averages.get('price_vs_ma20'))
+    if price_vs_ma20 is not None:
+        if price_vs_ma20 > 0.001:
+            reasons.append('Price is above MA20.')
+        elif price_vs_ma20 < -0.001:
+            reasons.append('Price is below MA20.')
+        else:
+            reasons.append('Price is near MA20.')
+
+    rsi = _as_float(momentum.get('rsi'))
+    if rsi is not None:
+        if rsi >= 70:
+            reasons.append(f'RSI is overbought at {rsi:.1f}.')
+        elif rsi <= 30:
+            reasons.append(f'RSI is oversold at {rsi:.1f}.')
+        else:
+            reasons.append(f'RSI is neutral at {rsi:.1f}.')
+
+    macd_histogram = _as_float(momentum.get('macd_histogram'))
+    if macd_histogram is not None:
+        if macd_histogram > 0:
+            reasons.append('MACD momentum is positive.')
+        elif macd_histogram < 0:
+            reasons.append('MACD momentum is negative.')
+        else:
+            reasons.append('MACD momentum is flat.')
+
+    if direction:
+        reasons.append(f'Trend direction is {direction}.')
+
+    broad_symbol = broad.get('symbol') or 'SPY'
+    if broad.get('available') is True:
+        broad_state = broad.get('regime') or broad.get('direction') or 'unavailable'
+        reasons.append(f'Broad market {broad_symbol} is {broad_state}.')
+
+    sector_benchmark = sector.get('benchmark')
+    if sector.get('available') is True and sector_benchmark:
+        sector_state = sector.get('regime') or sector.get('direction') or 'unavailable'
+        reasons.append(f'Sector {sector_benchmark} is {sector_state}.')
+
+    if backtest.get('available') is True:
+        reasons.append(
+            f'Historical backtest evidence is available with '
+            f"{backtest.get('trade_count', 0)} trades."
+        )
+
+    if portfolio.get('has_position') is True:
+        reasons.append('The portfolio currently holds this security.')
+    elif portfolio.get('available') is True:
+        reasons.append('The portfolio has no current position in this security.')
+
+    return reasons[:5]
+
+
+def _decision_main_risk(context, analysis):
+    volatility = (context.get('market_regime') or {}).get('volatility') or {}
+    percentile = _as_float(volatility.get('volatility_percentile'))
+    if percentile is not None and percentile >= 0.85:
+        return 'High volatility is the main current risk.'
+
+    technical = context.get('technical_analysis') or {}
+    moving_averages = technical.get('moving_averages') or {}
+    momentum = technical.get('momentum') or {}
+    price_vs_ma20 = _as_float(moving_averages.get('price_vs_ma20'))
+    macd_histogram = _as_float(momentum.get('macd_histogram'))
+    if price_vs_ma20 is not None and price_vs_ma20 < 0 and (macd_histogram or 0) < 0:
+        return 'Price is below MA20 with negative momentum.'
+
+    risk_factors = analysis.get('risk_factors') or []
+    if risk_factors:
+        return risk_factors[0]
+    return 'Mixed evidence with limited confirmation.'
+
+
+def build_decision_summary(context, analysis):
+    market_regime = context.get('market_regime') or {}
+    technical = context.get('technical_analysis') or {}
+    moving_averages = technical.get('moving_averages') or {}
+    momentum = technical.get('momentum') or {}
+    backtest = context.get('backtest_context') or {}
+    market_context = context.get('market_context') or {}
+    confirmation = market_context.get('confirmation') or {}
+    regime = market_regime.get('regime')
+    direction = market_regime.get('direction')
+    price_vs_ma20 = _as_float(moving_averages.get('price_vs_ma20'))
+    macd_histogram = _as_float(momentum.get('macd_histogram'))
+    stance = _decision_stance(direction, price_vs_ma20, macd_histogram, regime)
+    confidence = _decision_confidence(context, analysis)
+    suggested_approach = 'Wait for Confirmation'
+    suitable_strategy = 'Swing'
+
+    if regime == 'high_volatility':
+        suggested_approach = 'Wait for Confirmation'
+        suitable_strategy = 'Reduced Exposure / Wait'
+    elif regime == 'sideways_range':
+        suggested_approach = 'Mean-Reversion Opportunity'
+        suitable_strategy = 'Mean Reversion'
+    elif direction == 'Bullish':
+        suggested_approach = 'Hold / Monitor'
+        suitable_strategy = 'Trend Following'
+    elif direction == 'Bearish':
+        suggested_approach = 'Reduced Exposure'
+        suitable_strategy = 'Reduced Exposure / Wait'
+
+    time_horizon = 'Short-to-Medium Term'
+    if regime == 'sideways_range' or regime == 'high_volatility':
+        time_horizon = 'Short Term'
+    elif backtest.get('available') is True and confirmation.get('level') == 'Strong':
+        time_horizon = 'Medium Term'
+
+    return {
+        'stance': stance,
+        'confidence': confidence,
+        'suggested_approach': suggested_approach,
+        'suitable_strategy': suitable_strategy,
+        'time_horizon': time_horizon,
+        'key_reasons': _decision_key_reasons(context, analysis),
+        'main_risk': _decision_main_risk(context, analysis),
+    }
+
+
 def normalize_unified_analysis(data, context):
     """Normalize LLM narrative and inject Django-owned facts from context."""
 
@@ -111,7 +291,7 @@ def normalize_unified_analysis(data, context):
     backtest_available = backtest_context.get('available') is True
     market_confirmation = (context.get('market_context') or {}).get('confirmation') or {}
 
-    return {
+    normalized = {
         'market_view': {
             'regime': market_regime.get('regime'),
             'direction': market_regime.get('direction'),
@@ -143,3 +323,5 @@ def normalize_unified_analysis(data, context):
         'overall_assessment': _string(data.get('overall_assessment')),
         'risk_factors': _string_list(data.get('risk_factors')),
     }
+    normalized['decision_summary'] = build_decision_summary(context, normalized)
+    return normalized

@@ -13,10 +13,11 @@ test('Dashboard loads its instrument list from the authenticated user holdings',
   assert.match(source, /normalizeHoldingsToDashboardSecurities\(response\)/)
 })
 
-test('Dashboard empty state explains the user-facing portfolio workflow', () => {
+test('Dashboard empty state still allows arbitrary security search', () => {
   const source = readDashboardSource()
 
-  assert.match(source, /No portfolio holdings yet\./)
-  assert.match(source, /Add a position or search for a security to get started\./)
+  assert.match(source, /Search for a security\./)
+  assert.match(source, /Select any supported symbol/)
   assert.doesNotMatch(source, /Add active Security records in Django/)
+  assert.doesNotMatch(source, /No portfolio holdings yet\./)
 })

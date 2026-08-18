@@ -44,7 +44,7 @@ function getSecurityLoadMessage(error) {
     return 'Your session has expired. Please sign in again.'
   }
 
-  return 'Unable to load your portfolio holdings. Please try again.'
+  return 'Unable to load securities. Please try again.'
 }
 
 function DashboardSecurityState({ actionLabel, children, onAction, tone = '' }) {
@@ -71,12 +71,12 @@ function SecuritySelectorPanel({
     <section className="dashboard-panel dashboard-security-panel" aria-labelledby="dashboard-security-title">
       <div className="panel-header dashboard-security-header">
         <div>
-          <p>Portfolio holdings</p>
+          <p>Security</p>
           <h2 id="dashboard-security-title">{selectedSecurity.symbol}</h2>
           <span>{selectedSecurity.name}</span>
         </div>
         <div className="dashboard-security-source" aria-label="Dashboard data sources">
-          <strong>Your portfolio</strong>
+          <strong>Security universe</strong>
           <span>OHLCV from market data</span>
         </div>
       </div>
@@ -131,7 +131,7 @@ function SecuritySelectorPanel({
       </dl>
 
       <p className="dashboard-security-count">
-        {securities.length} securities available from your portfolio and recent searches.
+        {securities.length} securities available from quick access and recent searches.
       </p>
     </section>
   )
@@ -186,8 +186,8 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
   const [marketSummaryError, setMarketSummaryError] = useState('')
   const [securities, setSecurities] = useState([])
   const [selectedSecurityId, setSelectedSecurityId] = useState(() => readStoredSecurityId())
-  const [selectedRange, setSelectedRange] = useState(dashboardMarketDataRanges[0])
-  const [selectedInterval, setSelectedInterval] = useState(() => getDefaultMarketDataInterval(dashboardMarketDataRanges[0]))
+  const [selectedRange, setSelectedRange] = useState('6M')
+  const [selectedInterval, setSelectedInterval] = useState(() => getDefaultMarketDataInterval('6M'))
   const [customRange, setCustomRange] = useState(() => createDefaultCustomMarketDataRange())
   const [customRangeDraft, setCustomRangeDraft] = useState(() => createDefaultCustomMarketDataRange())
   const [isCustomRangeOpen, setIsCustomRangeOpen] = useState(false)
@@ -455,6 +455,9 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
   const updateSelectedSecurity = (securityId) => {
     setSelectedSecurityId(securityId)
     writeStoredSecurityId(securityId)
+    setMarketData(null)
+    setMarketDataError('')
+    setIsMarketDataLoading(true)
   }
 
   const selectSecuritySearchResult = async (searchResult) => {
@@ -543,14 +546,14 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
 
       {isSecurityLoading ? (
         <DashboardSecurityState>
-          <p>Portfolio holdings</p>
-          <h2>Loading holdings...</h2>
-          <span>Fetching your current portfolio positions.</span>
+          <p>Security</p>
+          <h2>Loading securities...</h2>
+          <span>Fetching available security records and quick-access positions.</span>
         </DashboardSecurityState>
       ) : securityError ? (
         <DashboardSecurityState actionLabel="Retry" onAction={loadSecurities} tone="is-error">
-          <p>Portfolio holdings</p>
-          <h2>Holdings request failed.</h2>
+          <p>Security</p>
+          <h2>Securities request failed.</h2>
           <span>{securityError}</span>
         </DashboardSecurityState>
       ) : selectedSecurity ? (
@@ -565,9 +568,20 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
         />
       ) : (
         <DashboardSecurityState tone="is-empty">
-          <p>Portfolio holdings</p>
-          <h2>No portfolio holdings yet.</h2>
-          <span>Add a position or search for a security to get started.</span>
+          <p>Security</p>
+          <h2>Search for a security.</h2>
+          <span>Select any supported symbol to view its market data, chart, and technical indicators.</span>
+          <div className="dashboard-security-search dashboard-security-search-empty">
+            <SecuritySearchSelect
+              id="dashboard-empty-security-search"
+              localSecurities={securities}
+              selectedSecurity={null}
+              onSelect={selectSecuritySearchResult}
+              disabled={isResolvingSecurity}
+              clearSelectionOnEdit={false}
+            />
+          </div>
+          {securityResolveError ? <small className="dashboard-security-resolve-error">{securityResolveError}</small> : null}
         </DashboardSecurityState>
       )}
 

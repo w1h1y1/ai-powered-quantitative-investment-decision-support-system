@@ -16,8 +16,8 @@ test('DeepSeek is only called from the explicit generate action', () => {
 })
 
 test('loading state disables selector and button', () => {
-  assert.match(source, /disabled=\{!selectedSymbol \|\| isLoading \|\| isSecuritiesLoading\}/)
-  assert.match(source, /disabled=\{isSecuritiesLoading \|\| isLoading\}/)
+  assert.match(source, /disabled=\{!selectedSymbol \|\| isLoading \|\| isSecuritiesLoading \|\| isResolvingAsset\}/)
+  assert.match(source, /disabled=\{isSecuritiesLoading \|\| isLoading \|\| isResolvingAsset\}/)
 })
 
 test('stale responses are guarded by request id and symbol', () => {

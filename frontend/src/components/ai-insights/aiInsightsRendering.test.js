@@ -69,6 +69,29 @@ test('overview renders Django-controlled market facts', () => {
   assert.match(text, /2026-08-14/)
 })
 
+test('decision summary renders structured decision fields', () => {
+  const text = render(components.DecisionSummaryCard, {
+    analysis: {
+      ...analysis,
+      decision_summary: {
+        stance: 'Cautious',
+        confidence: 'Medium',
+        suggested_approach: 'Wait for Confirmation',
+        suitable_strategy: 'Reduced Exposure / Wait',
+        time_horizon: 'Short Term',
+        key_reasons: ['High volatility', 'Weak momentum'],
+        main_risk: 'High volatility',
+      },
+    },
+  })
+
+  assert.match(text, /AI Decision Summary/)
+  assert.match(text, /Cautious/)
+  assert.match(text, /Reduced Exposure \/ Wait/)
+  assert.match(text, /Key Reasons/)
+  assert.match(text, /Main Risk/)
+})
+
 test('analysis cards render required sections', () => {
   assert.match(render(components.MarketViewCard, { analysis }), /Market View/)
   assert.match(render(components.TechnicalViewCard, { analysis }), /Technical Analysis/)
