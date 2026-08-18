@@ -88,6 +88,20 @@ export function getActiveSecurities(response) {
     .filter((security) => security?.id && security.symbol && security.name && security.isActive)
 }
 
+export function normalizeHoldingsToDashboardSecurities(response) {
+  if (!Array.isArray(response)) return []
+
+  const securitiesById = new Map()
+  response.forEach((holding) => {
+    const security = normalizeSecurity(holding?.security)
+    if (!security?.id || !security.symbol || !security.name) return
+    securitiesById.set(String(security.id), security)
+  })
+
+  return Array.from(securitiesById.values())
+    .sort((left, right) => left.symbol.localeCompare(right.symbol))
+}
+
 export function upsertDashboardSecurity(securities, security) {
   if (!security?.id || !security.symbol || !security.isActive) return securities
 

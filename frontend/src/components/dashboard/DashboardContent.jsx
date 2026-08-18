@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import SecuritySearchSelect from '../security/SecuritySearchSelect'
 import { marketDataApi } from '../../services/marketDataApi'
+import { holdingApi } from '../../services/holdingApi'
 import { portfolioApi } from '../../services/portfolioApi'
 import { securityApi } from '../../services/securityApi'
 import {
@@ -27,6 +28,7 @@ import {
   getTodayDateInputValue,
   isCustomMarketDataRange,
   marketDataResponseMatchesRequest,
+  normalizeHoldingsToDashboardSecurities,
   normalizeMarketData,
   normalizeMarketSummary,
   readStoredSecurityId,
@@ -42,7 +44,7 @@ function getSecurityLoadMessage(error) {
     return 'Your session has expired. Please sign in again.'
   }
 
-  return 'Unable to load securities. Please try again.'
+  return 'Unable to load your portfolio holdings. Please try again.'
 }
 
 function DashboardSecurityState({ actionLabel, children, onAction, tone = '' }) {
@@ -69,13 +71,13 @@ function SecuritySelectorPanel({
     <section className="dashboard-panel dashboard-security-panel" aria-labelledby="dashboard-security-title">
       <div className="panel-header dashboard-security-header">
         <div>
-          <p>Security universe</p>
+          <p>Portfolio holdings</p>
           <h2 id="dashboard-security-title">{selectedSecurity.symbol}</h2>
           <span>{selectedSecurity.name}</span>
         </div>
         <div className="dashboard-security-source" aria-label="Dashboard data sources">
-          <strong>Security API</strong>
-          <span>OHLCV from market-data API</span>
+          <strong>Your portfolio</strong>
+          <span>OHLCV from market data</span>
         </div>
       </div>
 
@@ -129,8 +131,7 @@ function SecuritySelectorPanel({
       </dl>
 
       <p className="dashboard-security-count">
-        {securities.length} active securities from Django.
-        {' '}Search results may also include verified remote securities.
+        {securities.length} securities available from your portfolio and recent searches.
       </p>
     </section>
   )
@@ -308,8 +309,8 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
     setSecurityError('')
 
     try {
-      const response = await securityApi.list()
-      setSecurities(getActiveSecurities(response))
+      const response = await holdingApi.list()
+      setSecurities(normalizeHoldingsToDashboardSecurities(response))
     } catch (error) {
       setSecurities([])
       setSecurityError(getSecurityLoadMessage(error))
@@ -542,14 +543,14 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
 
       {isSecurityLoading ? (
         <DashboardSecurityState>
-          <p>Security API</p>
-          <h2>Loading securities...</h2>
-          <span>Fetching the available Security records from Django.</span>
+          <p>Portfolio holdings</p>
+          <h2>Loading holdings...</h2>
+          <span>Fetching your current portfolio positions.</span>
         </DashboardSecurityState>
       ) : securityError ? (
         <DashboardSecurityState actionLabel="Retry" onAction={loadSecurities} tone="is-error">
-          <p>Security API</p>
-          <h2>Securities request failed.</h2>
+          <p>Portfolio holdings</p>
+          <h2>Holdings request failed.</h2>
           <span>{securityError}</span>
         </DashboardSecurityState>
       ) : selectedSecurity ? (
@@ -564,9 +565,9 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
         />
       ) : (
         <DashboardSecurityState tone="is-empty">
-          <p>Security API</p>
-          <h2>No active securities.</h2>
-          <span>Add active Security records in Django before selecting a dashboard instrument.</span>
+          <p>Portfolio holdings</p>
+          <h2>No portfolio holdings yet.</h2>
+          <span>Add a position or search for a security to get started.</span>
         </DashboardSecurityState>
       )}
 

@@ -20,6 +20,7 @@ import {
   marketDataResponseMatchesRequest,
   normalizeMarketData,
   normalizeDashboardVisibleWindow,
+  normalizeHoldingsToDashboardSecurities,
   normalizeMarketSummary,
   panDashboardVisibleWindow,
   readStoredSecurityId,
@@ -93,6 +94,27 @@ test('adds a remotely resolved Security once and keeps the universe sorted', () 
 
   assert.deepEqual(added.map((item) => item.symbol), ['AAPL', 'JPM', 'MSFT'])
   assert.equal(reused.filter((item) => item.id === 13).length, 1)
+})
+
+test('builds dashboard securities from user holdings and deduplicates security ids', () => {
+  const securities = normalizeHoldingsToDashboardSecurities([
+    {
+      security: security({ id: 1, symbol: 'AAPL', name: 'Apple Inc.' }),
+    },
+    {
+      security: security({ id: 1, symbol: 'AAPL', name: 'Apple Inc.' }),
+    },
+    {
+      security: security({ id: 2, symbol: 'JPM', name: 'JPMorgan Chase & Co.', exchange: 'NYSE', mic_code: 'XNYS' }),
+    },
+    {
+      security: security({ id: 3, symbol: 'QQQ', is_active: false }),
+    },
+    { security: null },
+  ])
+
+  assert.deepEqual(securities.map((item) => item.symbol), ['AAPL', 'JPM', 'QQQ'])
+  assert.deepEqual(securities.map((item) => item.id), [1, 2, 3])
 })
 
 test('filters securities by symbol or company name', () => {
