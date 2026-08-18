@@ -261,6 +261,8 @@
   grid-template-columns: minmax(0, 0.9fr) minmax(220px, 1.1fr);
   gap: 14px;
   margin-top: 18px;
+  position: relative;
+  z-index: 40;
 }
 
 .dashboard-security-search > span,
@@ -276,6 +278,10 @@
 
 .dashboard-security-search > .security-search-select {
   position: relative;
+}
+
+.dashboard-security-search .security-search-popover {
+  z-index: 80;
 }
 
 .dashboard-security-search > .security-search-select > input {
