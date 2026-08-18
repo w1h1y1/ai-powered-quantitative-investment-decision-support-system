@@ -251,6 +251,8 @@ class AuthApiTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('csrftoken', response.client.cookies)
+        self.assertIn('csrf_token', response.data)
+        self.assertTrue(response.data['csrf_token'])
 
 
 class AdminLoginTests(TestCase):

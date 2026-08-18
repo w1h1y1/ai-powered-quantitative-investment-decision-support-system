@@ -3,7 +3,6 @@ const viteEnv = import.meta.env || {}
 
 export const API_BASE_URL = (viteEnv.VITE_API_BASE_URL || defaultBaseUrl).replace(/\/+$/, '')
 
-const csrfCookieName = 'csrftoken'
 const networkErrorMessage = 'Unable to connect to the server. Please try again later.'
 let csrfRequestPromise = null
 
@@ -14,12 +13,6 @@ export class ApiError extends Error {
     this.status = status
     this.data = data
   }
-}
-
-function getCookie(name) {
-  const cookies = document.cookie ? document.cookie.split('; ') : []
-  const cookie = cookies.find((item) => item.startsWith(`${name}=`))
-  return cookie ? decodeURIComponent(cookie.slice(name.length + 1)) : ''
 }
 
 function buildUrl(path) {
@@ -55,25 +48,39 @@ async function parseResponse(response) {
   }
 }
 
-async function ensureCsrfCookie() {
-  if (getCookie(csrfCookieName)) return
+async function ensureCsrfToken() {
   if (!csrfRequestPromise) {
     csrfRequestPromise = fetch(buildUrl('/api/auth/csrf/'), {
       method: 'GET',
       credentials: 'include',
+    }).then(async (response) => {
+      if (!response.ok) {
+        throw new ApiError(
+          'Unable to prepare CSRF protection. Please try again.',
+          response.status,
+          await parseResponse(response),
+        )
+      }
+      const data = await parseResponse(response)
+      if (!data?.csrf_token) {
+        throw new ApiError(
+          'CSRF token missing from server response.',
+          response.status,
+          data,
+        )
+      }
+      return data.csrf_token
     }).finally(() => {
       csrfRequestPromise = null
     })
   }
 
-  let response
   try {
-    response = await csrfRequestPromise
+    return await csrfRequestPromise
   } catch (error) {
-    throw new ApiError(networkErrorMessage, 0, null)
-  }
-  if (!response.ok) {
-    throw new ApiError('Unable to prepare CSRF protection. Please try again.', response.status, await parseResponse(response))
+    throw error instanceof ApiError
+      ? error
+      : new ApiError(networkErrorMessage, 0, null)
   }
 }
 
@@ -83,8 +90,7 @@ export async function apiRequest(path, options = {}) {
   const headers = new Headers(options.headers || {})
 
   if (isUnsafeMethod) {
-    await ensureCsrfCookie()
-    headers.set('X-CSRFToken', getCookie(csrfCookieName))
+    headers.set('X-CSRFToken', await ensureCsrfToken())
   }
 
   if (options.body !== undefined && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
