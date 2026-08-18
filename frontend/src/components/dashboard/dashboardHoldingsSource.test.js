@@ -18,6 +18,7 @@ test('Dashboard empty state still allows arbitrary security search', () => {
 
   assert.match(source, /Search for a security\./)
   assert.match(source, /Select any supported symbol/)
+  assert.match(source, /PopularSecurityChips/)
   assert.doesNotMatch(source, /Add active Security records in Django/)
   assert.doesNotMatch(source, /No portfolio holdings yet\./)
 })

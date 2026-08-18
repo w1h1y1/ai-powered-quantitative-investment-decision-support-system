@@ -341,7 +341,10 @@ export default function WatchlistContent({ onViewAnalysis }) {
   }
 
   const focusSearch = () => {
-    searchInputRef.current?.focus()
+    searchInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    window.setTimeout(() => {
+      searchInputRef.current?.focus()
+    }, 0)
   }
 
   const notice = isDuplicate

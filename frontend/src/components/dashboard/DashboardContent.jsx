@@ -40,6 +40,54 @@ import {
   writeStoredSecurityId,
 } from './dashboardSecurityModel'
 
+const popularDashboardSecurities = [
+  {
+    symbol: 'SPY',
+    name: 'SPDR S&P 500 ETF Trust',
+    exchange: 'NYSEARCA',
+    mic_code: 'ARCX',
+    instrument_type: 'ETF',
+    country: 'United States',
+    currency: 'USD',
+  },
+  {
+    symbol: 'QQQ',
+    name: 'Invesco QQQ ETF',
+    exchange: 'NASDAQ',
+    mic_code: 'XNAS',
+    instrument_type: 'ETF',
+    country: 'United States',
+    currency: 'USD',
+  },
+  {
+    symbol: 'AAPL',
+    name: 'Apple Inc.',
+    exchange: 'NASDAQ',
+    mic_code: 'XNAS',
+    instrument_type: 'Common Stock',
+    country: 'United States',
+    currency: 'USD',
+  },
+  {
+    symbol: 'MSFT',
+    name: 'Microsoft Corporation',
+    exchange: 'NASDAQ',
+    mic_code: 'XNAS',
+    instrument_type: 'Common Stock',
+    country: 'United States',
+    currency: 'USD',
+  },
+  {
+    symbol: 'NVDA',
+    name: 'NVIDIA Corporation',
+    exchange: 'NASDAQ',
+    mic_code: 'XNAS',
+    instrument_type: 'Common Stock',
+    country: 'United States',
+    currency: 'USD',
+  },
+]
+
 function getSecurityLoadMessage(error) {
   if (error?.status === 401 || error?.status === 403) {
     return 'Your session has expired. Please sign in again.'
@@ -56,6 +104,25 @@ function DashboardSecurityState({ actionLabel, children, onAction, tone = '' }) 
         <button className="panel-action" type="button" onClick={onAction}>{actionLabel}</button>
       )}
     </section>
+  )
+}
+
+function PopularSecurityChips({ onSelect }) {
+  return (
+    <div className="dashboard-popular-securities">
+      <span>Popular</span>
+      <div className="dashboard-popular-chips">
+        {popularDashboardSecurities.map((security) => (
+          <button
+            key={security.symbol}
+            type="button"
+            onClick={() => onSelect({ ...security, id: null })}
+          >
+            {security.symbol}
+          </button>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -107,6 +174,8 @@ function SecuritySelectorPanel({
           </select>
         </label>
       </div>
+
+      <PopularSecurityChips onSelect={onSearchResultSelect} />
 
       <dl className="dashboard-security-basics">
         <div>
@@ -312,7 +381,20 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
 
     try {
       const response = await holdingApi.list()
-      setSecurities(normalizeHoldingsToDashboardSecurities(response))
+      const nextSecurities = normalizeHoldingsToDashboardSecurities(response)
+      if (!nextSecurities.length) {
+        const resolvedResponse = await securityApi.resolve(popularDashboardSecurities[0])
+        const defaultSecurity = normalizeSecurity(resolvedResponse?.security)
+        if (defaultSecurity?.id) {
+          const selected = { ...defaultSecurity, isActive: true }
+          setSecurities([selected])
+          setSelectedSecurity(selected)
+          setSelectedSecurityId(String(selected.id))
+          writeStoredSecurityId(String(selected.id))
+          return
+        }
+      }
+      setSecurities(nextSecurities)
     } catch (error) {
       setSecurities([])
       setSecurityError(getSecurityLoadMessage(error))
@@ -587,6 +669,7 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
               clearSelectionOnEdit={false}
             />
           </div>
+          <PopularSecurityChips onSelect={selectSecuritySearchResult} />
           {securityResolveError ? <small className="dashboard-security-resolve-error">{securityResolveError}</small> : null}
         </DashboardSecurityState>
       )}

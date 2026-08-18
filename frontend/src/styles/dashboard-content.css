@@ -1520,3 +1520,43 @@
     height: 100px;
   }
 }
+
+.dashboard-popular-securities {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.dashboard-popular-securities > span {
+  color: #8c96a7;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.dashboard-popular-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.dashboard-popular-chips button {
+  min-height: 27px;
+  padding: 0 9px;
+  color: #5f6c84;
+  background: #f5f7fb;
+  border: 1px solid #e3e7f0;
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.dashboard-popular-chips button:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: rgba(104, 119, 245, 0.28);
+}

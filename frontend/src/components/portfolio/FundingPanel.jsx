@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { portfolioApi } from '../../services/portfolioApi'
 import { formatCurrency } from './portfolioMath'
 
@@ -69,25 +69,21 @@ export default function FundingPanel({ onRefresh, remainingLiquidity }) {
     loadHistory()
   }, [])
 
-  const canInitialDeposit = useMemo(() => {
-    const hasInitialDeposit = history.some(
-      (flow) => flow.flow_type === 'INITIAL' && Number(flow.amount) > 0,
-    )
-    const hasLaterFlow = history.some((flow) => flow.flow_type !== 'INITIAL')
-    return !hasInitialDeposit && !hasLaterFlow
-  }, [history])
-
-  useEffect(() => {
-    if (!canInitialDeposit && flowType === 'INITIAL_DEPOSIT') {
-      setFlowType('DEPOSIT')
-    }
-  }, [canInitialDeposit, flowType])
-
   const canSubmit = amount !== ''
     && Number.isFinite(Number(amount))
     && Number(amount) > 0
     && transactionDate
     && !isSubmitting
+
+  useEffect(() => {
+    if (!notice) return undefined
+    const timer = window.setTimeout(() => setNotice(''), 3000)
+    return () => window.clearTimeout(timer)
+  }, [notice])
+
+  useEffect(() => {
+    setActionError('')
+  }, [amount, flowType, note, transactionDate])
 
   const handleSubmit = async (event) => {
     event.preventDefault()
@@ -119,7 +115,6 @@ export default function FundingPanel({ onRefresh, remainingLiquidity }) {
   }
 
   const flowOptions = [
-    ...(canInitialDeposit ? [['INITIAL_DEPOSIT', 'Initial Deposit']] : []),
     ['DEPOSIT', 'Deposit'],
     ['WITHDRAWAL', 'Withdrawal'],
   ]
@@ -195,7 +190,7 @@ export default function FundingPanel({ onRefresh, remainingLiquidity }) {
         )}
         {!isHistoryLoading && !historyError && !history.length && (
           <p className="portfolio-transactions-notice" role="status">
-            No funding history yet. Record your initial deposit to establish available cash.
+            No funding history yet. Record your first deposit to establish available cash.
           </p>
         )}
 
