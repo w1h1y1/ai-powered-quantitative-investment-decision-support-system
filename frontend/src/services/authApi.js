@@ -1,4 +1,4 @@
-import { apiRequest } from './apiClient'
+import { apiRequest } from './apiClient.js'
 
 export const authApi = {
   csrf() {
