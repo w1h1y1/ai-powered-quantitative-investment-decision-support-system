@@ -370,40 +370,35 @@ export default function AIInsightsContent() {
         </div>
       </section>
 
-      <section className="ai-insights-config-card" aria-labelledby="ai-insights-config-title">
-        <div className="ai-insights-config-heading">
-          <p>Configuration</p>
-          <h2 id="ai-insights-config-title">Analysis Setup</h2>
-        </div>
-        <div className="ai-insights-config-row">
-          <label className="ai-insights-field">
-            <span>Asset</span>
-            <SecuritySearchSelect
-              id="ai-insights-asset"
-              localSecurities={securities}
-              selectedSecurity={selectedAsset}
-              onSelect={selectAsset}
+      <section className="ai-insights-searchbar" aria-label="AI Insights security selection">
+        <label className="ai-insights-searchbar-control">
+          <span>Security</span>
+          <SecuritySearchSelect
+            id="ai-insights-asset"
+            localSecurities={securities}
+            selectedSecurity={selectedAsset}
+            onSelect={selectAsset}
             disabled={isSecuritiesLoading || isLoading || isResolvingAsset}
-              clearSelectionOnEdit={false}
-            />
-            {selectedAsset && (
-              <div className="ai-insights-selected-asset">
-                <strong>{selectedAsset.symbol} — {selectedAsset.name}</strong>
-                <span>{selectedAsset.type}</span>
-              </div>
-            )}
-          </label>
-          <button
-            className="ai-insights-generate-button"
-            type="button"
-            disabled={!selectedSymbol || isLoading || isSecuritiesLoading || isResolvingAsset}
-            onClick={generateAnalysis}
-          >
-            {isLoading ? 'Analyzing...' : 'Generate AI Analysis'}
-          </button>
+            clearSelectionOnEdit={false}
+          />
+        </label>
+        <div className="ai-insights-searchbar-selection" aria-live="polite">
+          {selectedAsset ? (
+            <strong>{selectedAsset.symbol} · {selectedAsset.name} · {selectedAsset.type}</strong>
+          ) : (
+            <span>No security selected</span>
+          )}
         </div>
-        {securitiesError && <p className="ai-insights-config-error" role="alert">{securitiesError}</p>}
+        <button
+          className="ai-insights-generate-button"
+          type="button"
+          disabled={!selectedSymbol || isLoading || isSecuritiesLoading || isResolvingAsset}
+          onClick={generateAnalysis}
+        >
+          {isLoading ? 'Analyzing...' : 'Generate AI Analysis'}
+        </button>
       </section>
+      {securitiesError && <p className="ai-insights-config-error" role="alert">{securitiesError}</p>}
 
       <div className="ai-insights-result-region">
         {isLoading ? (

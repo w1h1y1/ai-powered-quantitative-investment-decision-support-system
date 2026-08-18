@@ -187,6 +187,7 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
   const [marketSummaryError, setMarketSummaryError] = useState('')
   const [securities, setSecurities] = useState([])
   const [selectedSecurityId, setSelectedSecurityId] = useState(() => readStoredSecurityId())
+  const [selectedSecurity, setSelectedSecurity] = useState(null)
   const [selectedRange, setSelectedRange] = useState('6M')
   const [selectedInterval, setSelectedInterval] = useState(() => getDefaultMarketDataInterval('6M'))
   const [customRange, setCustomRange] = useState(() => createDefaultCustomMarketDataRange())
@@ -335,13 +336,12 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
     if (resolvedSecurityId !== selectedSecurityId) {
       setSelectedSecurityId(resolvedSecurityId)
     }
+    setSelectedSecurity(
+      securities.find((security) => String(security.id) === resolvedSecurityId) ?? null,
+    )
     writeStoredSecurityId(resolvedSecurityId)
   }, [isSecurityLoading, securities, securityError, selectedSecurityId])
 
-  const selectedSecurity = useMemo(
-    () => securities.find((security) => String(security.id) === selectedSecurityId) ?? null,
-    [securities, selectedSecurityId],
-  )
   const customRangeMaxDate = getTodayDateInputValue()
   const customRangeDraftError = useMemo(
     () => validateCustomMarketDataRange(customRangeDraft, customRangeMaxDate),
@@ -455,6 +455,9 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
 
   const updateSelectedSecurity = (securityId) => {
     setSelectedSecurityId(securityId)
+    setSelectedSecurity(
+      securities.find((security) => String(security.id) === String(securityId)) ?? null,
+    )
     writeStoredSecurityId(securityId)
     setMarketData(null)
     setMarketDataError('')
@@ -481,6 +484,7 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
         upsertDashboardSecurity(currentSecurities, { ...resolvedSecurity, isActive: true })
       ))
       updateSelectedSecurity(String(resolvedSecurity.id))
+      setSelectedSecurity(resolvedSecurity)
     } catch (error) {
       setSecurityResolveError(error?.message || 'Unable to add the selected security. Please try again.')
     } finally {
