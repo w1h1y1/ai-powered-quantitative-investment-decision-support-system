@@ -51,6 +51,32 @@ test('holding API uses the unified apiRequest base URL helper', () => {
   assert.doesNotMatch(holdingSource, /127\.0\.0\.1|localhost/)
 })
 
+test('business API services never hardcode localhost or backend URLs', () => {
+  const serviceFiles = [
+    'agentAnalysisApi.js',
+    'authApi.js',
+    'backtestApi.js',
+    'holdingApi.js',
+    'marketDataApi.js',
+    'marketRegimeApi.js',
+    'portfolioApi.js',
+    'predictionApi.js',
+    'securityApi.js',
+    'strategyEvaluationApi.js',
+    'transactionApi.js',
+    'watchlistApi.js',
+  ]
+
+  for (const fileName of serviceFiles) {
+    const source = readFileSync(new URL(`./${fileName}`, import.meta.url), 'utf8')
+    assert.doesNotMatch(
+      source,
+      /127\.0\.0\.1|localhost:8000|aiquant-backend\.onrender\.com/,
+      `${fileName} must not hardcode an API host`,
+    )
+  }
+})
+
 test('api client uses VITE_API_BASE_URL and credentials include for every request', () => {
   const apiClientSource = readFileSync(
     new URL('./apiClient.js', import.meta.url),
