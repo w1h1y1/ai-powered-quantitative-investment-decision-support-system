@@ -12,17 +12,10 @@ function jsonResponse(payload, status = 200) {
   })
 }
 
-function isCsrfUrl(url) {
-  return String(url).endsWith('/api/auth/csrf/')
-}
-
 test('Strategy Evaluation uses POST with only the selected symbol', async (t) => {
   let requestCount = 0
   let captured
   t.mock.method(globalThis, 'fetch', async (url, options) => {
-    if (isCsrfUrl(url)) {
-      return jsonResponse({ detail: 'CSRF cookie set.', csrf_token: 'test-csrf-token' })
-    }
     requestCount += 1
     captured = { url, options }
     return jsonResponse({
@@ -40,15 +33,12 @@ test('Strategy Evaluation uses POST with only the selected symbol', async (t) =>
   assert.equal(captured.url, 'http://127.0.0.1:8000/api/strategy-evaluation/')
   assert.equal(captured.options.method, 'POST')
   assert.equal(captured.options.body, JSON.stringify({ symbol: 'AAPL' }))
-  assert.equal(captured.options.headers.get('X-CSRFToken'), 'test-csrf-token')
+  assert.equal(captured.options.headers.get('X-CSRFToken'), null)
 })
 
 test('concurrent identical symbol requests reuse one in-flight POST', async (t) => {
   let requestCount = 0
   t.mock.method(globalThis, 'fetch', async (url) => {
-    if (isCsrfUrl(url)) {
-      return jsonResponse({ detail: 'CSRF cookie set.', csrf_token: 'test-csrf-token' })
-    }
     requestCount += 1
     return jsonResponse({ symbol: 'JPM', selected_strategy: 'mean_reversion' })
   })
@@ -65,9 +55,6 @@ test('concurrent identical symbol requests reuse one in-flight POST', async (t) 
 test('Strategy Evaluation HTTP 500 rejects once without automatic retry', async (t) => {
   let requestCount = 0
   t.mock.method(globalThis, 'fetch', async (url) => {
-    if (isCsrfUrl(url)) {
-      return jsonResponse({ detail: 'CSRF cookie set.', csrf_token: 'test-csrf-token' })
-    }
     requestCount += 1
     return jsonResponse({ detail: 'Internal strategy evaluation failure.' }, 500)
   })
@@ -87,9 +74,6 @@ test('Strategy Evaluation HTTP 500 rejects once without automatic retry', async 
 test('Strategy Evaluation HTTP 429 rejects once and permits one later manual retry', async (t) => {
   let requestCount = 0
   t.mock.method(globalThis, 'fetch', async (url) => {
-    if (isCsrfUrl(url)) {
-      return jsonResponse({ detail: 'CSRF cookie set.', csrf_token: 'test-csrf-token' })
-    }
     requestCount += 1
     if (requestCount === 1) {
       return jsonResponse({ detail: 'Market data provider rate limit reached.' }, 429)

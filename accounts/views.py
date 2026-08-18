@@ -1,11 +1,10 @@
-from django.contrib.auth import login as django_login
-from django.contrib.auth import logout as django_logout
 from django.middleware.csrf import get_token
 from django.utils.decorators import method_decorator
-from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
+from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from portfolio.services import get_or_create_primary_portfolio
 from watchlist.services import get_or_create_primary_watchlist
@@ -13,7 +12,6 @@ from watchlist.services import get_or_create_primary_watchlist
 from .serializers import LoginSerializer, RegisterSerializer, UserSerializer
 
 
-@method_decorator(csrf_protect, name='dispatch')
 class RegisterView(APIView):
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
@@ -27,7 +25,6 @@ class RegisterView(APIView):
         return Response(UserSerializer(user).data, status=status.HTTP_201_CREATED)
 
 
-@method_decorator(csrf_protect, name='dispatch')
 class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
     authentication_classes = []
@@ -39,18 +36,21 @@ class LoginView(APIView):
         )
         serializer.is_valid(raise_exception=True)
         user = serializer.validated_data['user']
-        django_login(request._request, user)
         get_or_create_primary_portfolio(user)
         get_or_create_primary_watchlist(user)
-        return Response(UserSerializer(user).data)
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+            'user': UserSerializer(user).data,
+        })
 
 
-@method_decorator(csrf_protect, name='dispatch')
 class LogoutView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     def post(self, request):
-        django_logout(request._request)
         return Response({'detail': 'Logged out.'})
 
 

@@ -7,29 +7,22 @@ function isUnauthenticatedError(error) {
   return error?.status === 401 || error?.status === 403
 }
 
-async function confirmCurrentSession(expectedUser) {
-  const currentUser = await authApi.me()
-  if (currentUser?.id !== expectedUser?.id) {
-    throw new Error('Login session could not be verified. Please log out and sign in again.')
-  }
-  return currentUser
-}
-
-async function confirmLoggedOut() {
-  try {
-    await authApi.me()
-  } catch (error) {
-    if (isUnauthenticatedError(error)) return
-    throw error
-  }
-
-  throw new Error('Logout did not clear the server session. Please refresh and try again.')
-}
-
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [authError, setAuthError] = useState('')
   const [isLoading, setIsLoading] = useState(true)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+
+    const handleSessionExpired = () => {
+      setAuthError('')
+      setUser(null)
+    }
+
+    window.addEventListener('aiquant:session-expired', handleSessionExpired)
+    return () => window.removeEventListener('aiquant:session-expired', handleSessionExpired)
+  }, [])
 
   const refreshUser = useCallback(async () => {
     setIsLoading(true)
@@ -83,51 +76,30 @@ export function AuthProvider({ children }) {
 
   const login = useCallback(async (credentials) => {
     const loginUser = await authApi.login(credentials)
-    const currentUser = await confirmCurrentSession(loginUser)
     setAuthError('')
-    setUser(currentUser)
-    return currentUser
+    setUser(loginUser)
+    return loginUser
   }, [])
 
   const register = useCallback(async (payload) => {
     await authApi.register(payload)
-    const currentUser = await authApi.login({
+    const loginUser = await authApi.login({
       username: payload.username,
       password: payload.password,
     })
     setAuthError('')
-    setUser(currentUser)
-    return currentUser
+    setUser(loginUser)
+    return loginUser
   }, [])
 
   const logout = useCallback(async () => {
     try {
       await authApi.logout()
-      await confirmLoggedOut()
+    } catch (error) {
+      // Ignore network errors during logout; local tokens are already cleared.
+    } finally {
       setAuthError('')
       setUser(null)
-    } catch (error) {
-      const detail = String(error?.data?.detail || error?.message || '').toLowerCase()
-      const isAlreadyLoggedOut = isUnauthenticatedError(error)
-        && detail.includes('authentication credentials')
-      const isCsrfFailure = error?.status === 403 && detail.includes('csrf')
-
-      if (isAlreadyLoggedOut) {
-        setAuthError('')
-        setUser(null)
-        return
-      }
-
-      if (isCsrfFailure) {
-        await authApi.csrf()
-        await authApi.logout()
-        await confirmLoggedOut()
-        setAuthError('')
-        setUser(null)
-        return
-      }
-
-      throw error
     }
   }, [])
 

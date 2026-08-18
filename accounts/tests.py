@@ -1,10 +1,13 @@
 from decimal import Decimal
+from datetime import timedelta
 
 from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
+from rest_framework_simplejwt.tokens import AccessToken, RefreshToken
 
 from portfolio.models import Portfolio
 from watchlist.models import Watchlist
@@ -121,10 +124,11 @@ class AuthApiTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['username'], 'user_a')
-        self.assertEqual(response.data['email'], 'user_a@example.com')
-        self.assertIs(response.data['is_authenticated'], True)
-        self.assertIn('sessionid', response.client.cookies)
+        self.assertTrue(response.data['access'])
+        self.assertTrue(response.data['refresh'])
+        self.assertEqual(response.data['user']['username'], 'user_a')
+        self.assertEqual(response.data['user']['email'], 'user_a@example.com')
+        self.assertIs(response.data['user']['is_authenticated'], True)
         self.assertEqual(Portfolio.objects.filter(user=user).count(), 1)
         self.assertEqual(Watchlist.objects.filter(user=user).count(), 1)
 
@@ -177,7 +181,8 @@ class AuthApiTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertNotIn('sessionid', response.client.cookies)
+        self.assertNotIn('access', response.data)
+        self.assertNotIn('refresh', response.data)
 
     def test_me_requires_login_and_returns_current_user(self):
         user = self.User.objects.create_user(
@@ -192,7 +197,8 @@ class AuthApiTests(APITestCase):
             [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN],
         )
 
-        self.client.login(username='user_a', password='StrongPassword123')
+        refresh = RefreshToken.for_user(user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
         response = self.client.get(reverse('auth-me'))
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -218,7 +224,8 @@ class AuthApiTests(APITestCase):
             available_funds=Decimal('1000.00'),
         )
 
-        self.client.login(username='user_a', password='StrongPassword123')
+        refresh = RefreshToken.for_user(user_a)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
         list_response = self.client.get(reverse('portfolio-list'))
         detail_response = self.client.get(reverse('portfolio-detail', args=[portfolio_b.id]))
 
@@ -226,25 +233,63 @@ class AuthApiTests(APITestCase):
         self.assertEqual([item['id'] for item in list_response.data], [portfolio_a.id])
         self.assertEqual(detail_response.status_code, status.HTTP_404_NOT_FOUND)
 
-    def test_logout_invalidates_session(self):
-        self.User.objects.create_user(username='user_a', password='StrongPassword123')
-        self.client.login(username='user_a', password='StrongPassword123')
+    def test_logout_endpoint_returns_success(self):
+        user = self.User.objects.create_user(username='user_a', password='StrongPassword123')
+        refresh = RefreshToken.for_user(user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
 
-        me_before_logout = self.client.get(reverse('auth-me'))
         logout_response = self.client.post(reverse('auth-logout'))
-        me_after_logout = self.client.get(reverse('auth-me'))
-        portfolio_after_logout = self.client.get(reverse('portfolio-list'))
 
-        self.assertEqual(me_before_logout.status_code, status.HTTP_200_OK)
         self.assertEqual(logout_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(logout_response.data, {'detail': 'Logged out.'})
+
+    def test_refresh_endpoint_returns_new_access_token(self):
+        user = self.User.objects.create_user(username='user_a', password='StrongPassword123')
+        refresh = RefreshToken.for_user(user)
+
+        response = self.client.post(
+            reverse('auth-refresh'),
+            {'refresh': str(refresh)},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['access'])
+
+    def test_invalid_jwt_is_rejected(self):
+        self.client.credentials(HTTP_AUTHORIZATION='Bearer invalid-token')
+
+        response = self.client.get(reverse('auth-me'))
+
         self.assertIn(
-            me_after_logout.status_code,
+            response.status_code,
             [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN],
         )
-        self.assertIn(
-            portfolio_after_logout.status_code,
-            [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN],
+
+    def test_expired_jwt_is_rejected(self):
+        user = self.User.objects.create_user(username='user_a', password='StrongPassword123')
+        token = AccessToken.for_user(user)
+        token.set_exp(from_time=timezone.now() - timedelta(hours=2))
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {token}')
+
+        response = self.client.get(reverse('auth-me'))
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_protected_endpoint_uses_jwt_authentication(self):
+        user = self.User.objects.create_user(username='user_a', password='StrongPassword123')
+        portfolio = Portfolio.objects.create(
+            user=user,
+            name='JWT Portfolio',
+            available_funds=Decimal('1000.00'),
         )
+
+        refresh = RefreshToken.for_user(user)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {refresh.access_token}')
+        response = self.client.get(reverse('portfolio-list'))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([item['id'] for item in response.data], [portfolio.id])
 
     def test_csrf_endpoint_sets_cookie(self):
         response = self.client.get(reverse('auth-csrf'))

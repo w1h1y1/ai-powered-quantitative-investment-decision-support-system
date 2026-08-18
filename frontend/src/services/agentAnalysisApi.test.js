@@ -9,12 +9,9 @@ function jsonResponse(payload, status = 200) {
   })
 }
 
-test('Generate AI Analysis obtains CSRF token and posts symbol to Django', async (t) => {
+test('Generate AI Analysis posts symbol through the unified API client', async (t) => {
   let captured
   t.mock.method(globalThis, 'fetch', async (url, options) => {
-    if (String(url).endsWith('/api/auth/csrf/')) {
-      return jsonResponse({ detail: 'CSRF cookie set.', csrf_token: 'test-csrf-token' })
-    }
     captured = { url, options }
     return jsonResponse({ symbol: 'AAPL', analysis_status: 'success', analysis: {} })
   })
@@ -25,5 +22,5 @@ test('Generate AI Analysis obtains CSRF token and posts symbol to Django', async
   assert.equal(captured.url, 'http://127.0.0.1:8000/api/agent/analyze/')
   assert.equal(captured.options.method, 'POST')
   assert.equal(captured.options.body, JSON.stringify({ symbol: 'AAPL' }))
-  assert.equal(captured.options.headers.get('X-CSRFToken'), 'test-csrf-token')
+  assert.equal(captured.options.headers.get('X-CSRFToken'), null)
 })

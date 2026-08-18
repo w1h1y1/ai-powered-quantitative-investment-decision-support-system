@@ -10,17 +10,25 @@ function jsonResponse(payload, status = 200) {
   })
 }
 
-function isCsrfUrl(url) {
-  return String(url).endsWith('/api/auth/csrf/')
+function createStorage() {
+  const values = new Map()
+  return {
+    getItem(key) {
+      return values.has(key) ? values.get(key) : null
+    },
+    setItem(key, value) {
+      values.set(key, String(value))
+    },
+    removeItem(key) {
+      values.delete(key)
+    },
+  }
 }
 
-test('register obtains CSRF token and sends credentials plus X-CSRFToken', async (t) => {
+test('register posts directly without requesting CSRF', async (t) => {
   const calls = []
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     calls.push({ url, options })
-    if (isCsrfUrl(url)) {
-      return jsonResponse({ detail: 'CSRF cookie set.', csrf_token: 'csrf-token-123' })
-    }
     return jsonResponse({ username: 'user_a', email: 'user_a@example.com' })
   })
 
@@ -32,14 +40,86 @@ test('register obtains CSRF token and sends credentials plus X-CSRFToken', async
   })
 
   assert.equal(response.username, 'user_a')
-  assert.equal(calls.length, 2)
+  assert.equal(calls.length, 1)
 
-  const [csrfCall, registerCall] = calls
-  assert.equal(csrfCall.options.credentials, 'include')
-  assert.equal(registerCall.options.credentials, 'include')
+  const [registerCall] = calls
+  assert.ok(String(registerCall.url).endsWith('/api/auth/register/'))
   assert.equal(registerCall.options.method, 'POST')
-  assert.equal(registerCall.options.headers.get('X-CSRFToken'), 'csrf-token-123')
+  assert.equal(registerCall.options.headers.get('X-CSRFToken'), null)
   assert.equal(registerCall.options.headers.get('Content-Type'), 'application/json')
+})
+
+test('login stores JWT tokens and returns the current user', async (t) => {
+  globalThis.localStorage = createStorage()
+  t.mock.method(globalThis, 'fetch', async () => jsonResponse({
+    access: 'access-token-123',
+    refresh: 'refresh-token-123',
+    user: { id: 1, username: 'user_a', email: 'user_a@example.com' },
+  }))
+
+  const user = await authApi.login({
+    username: 'user_a',
+    password: 'StrongPassword123',
+  })
+
+  assert.equal(user.username, 'user_a')
+  assert.equal(globalThis.localStorage.getItem('aiquant_access_token'), 'access-token-123')
+  assert.equal(globalThis.localStorage.getItem('aiquant_refresh_token'), 'refresh-token-123')
+})
+
+test('me request adds JWT Bearer Authorization automatically', async (t) => {
+  globalThis.localStorage = createStorage()
+  globalThis.localStorage.setItem('aiquant_access_token', 'access-token-123')
+
+  let captured
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    captured = { url, options }
+    return jsonResponse({ id: 1, username: 'user_a', email: 'user_a@example.com' })
+  })
+
+  const user = await authApi.me()
+
+  assert.equal(user.username, 'user_a')
+  assert.ok(String(captured.url).endsWith('/api/auth/me/'))
+  assert.equal(captured.options.headers.get('Authorization'), 'Bearer access-token-123')
+})
+
+test('logout clears stored authentication tokens', async (t) => {
+  globalThis.localStorage = createStorage()
+  globalThis.localStorage.setItem('aiquant_access_token', 'access-token-123')
+  globalThis.localStorage.setItem('aiquant_refresh_token', 'refresh-token-123')
+
+  let captured
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    captured = { url, options }
+    return jsonResponse({ detail: 'Logged out.' })
+  })
+
+  await authApi.logout()
+
+  assert.ok(String(captured.url).endsWith('/api/auth/logout/'))
+  assert.equal(globalThis.localStorage.getItem('aiquant_access_token'), null)
+  assert.equal(globalThis.localStorage.getItem('aiquant_refresh_token'), null)
+})
+
+test('me treats 401 as unauthenticated rather than a network failure', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => jsonResponse(
+    { detail: 'Authentication credentials were not provided.' },
+    401,
+  ))
+
+  await assert.rejects(
+    authApi.me(),
+    (error) => {
+      assert.equal(error.name, 'ApiError')
+      assert.equal(error.status, 401)
+      assert.notEqual(
+        error.message,
+        'Unable to connect to the server. Please try again later.',
+      )
+      return true
+    },
+  )
 })
 
 test('holding API uses the unified apiRequest base URL helper', () => {
@@ -77,13 +157,15 @@ test('business API services never hardcode localhost or backend URLs', () => {
   }
 })
 
-test('api client uses VITE_API_BASE_URL and credentials include for every request', () => {
+test('api client uses VITE_API_BASE_URL and JWT Bearer Authorization', () => {
   const apiClientSource = readFileSync(
     new URL('./apiClient.js', import.meta.url),
     'utf8',
   )
   assert.match(apiClientSource, /import\.meta\.env/)
   assert.match(apiClientSource, /viteEnv\.VITE_API_BASE_URL/)
-  assert.match(apiClientSource, /credentials:\s*'include'/)
-  assert.match(apiClientSource, /X-CSRFToken/)
+  assert.match(apiClientSource, /Authorization/)
+  assert.match(apiClientSource, /Bearer/)
+  assert.doesNotMatch(apiClientSource, /X-CSRFToken/)
+  assert.doesNotMatch(apiClientSource, /credentials:\s*'include'/)
 })

@@ -1,9 +1,6 @@
-import { apiRequest } from './apiClient.js'
+import { apiRequest, clearAuthTokens, setAuthTokens } from './apiClient.js'
 
 export const authApi = {
-  csrf() {
-    return apiRequest('/api/auth/csrf/')
-  },
   me() {
     return apiRequest('/api/auth/me/')
   },
@@ -13,15 +10,25 @@ export const authApi = {
       body: payload,
     })
   },
-  login(payload) {
-    return apiRequest('/api/auth/login/', {
+  async login(payload) {
+    const response = await apiRequest('/api/auth/login/', {
       method: 'POST',
       body: payload,
     })
-  },
-  logout() {
-    return apiRequest('/api/auth/logout/', {
-      method: 'POST',
+    setAuthTokens({
+      access: response.access,
+      refresh: response.refresh,
     })
+    return response.user
+  },
+  async logout() {
+    try {
+      await apiRequest('/api/auth/logout/', {
+        method: 'POST',
+      })
+    } finally {
+      clearAuthTokens()
+    }
+    return { detail: 'Logged out.' }
   },
 }

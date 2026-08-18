@@ -41,10 +41,18 @@ class SessionSwitchingIsolationTests(APITestCase):
             format='json',
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {response.data['access']}",
+        )
         me_response = self.client.get(reverse('auth-me'))
         self.assertEqual(me_response.status_code, status.HTTP_200_OK)
         self.assertEqual(me_response.data['username'], username)
         self.assertIs(me_response.data['is_authenticated'], True)
+        return response
+
+    def logout(self):
+        response = self.client.post(reverse('auth-logout'))
+        self.client.credentials()
         return response
 
     def create_holding(self, security, quantity='1.000000', average_price='100.0000'):
@@ -113,7 +121,7 @@ class SessionSwitchingIsolationTests(APITestCase):
         user_a_portfolio = Portfolio.objects.get(user=self.user_a)
         user_a_holding_id = user_a_holding_response.data['id']
 
-        logout_response = self.client.post(reverse('auth-logout'))
+        logout_response = self.logout()
         self.assertEqual(logout_response.status_code, status.HTTP_200_OK)
         me_after_logout = self.client.get(reverse('auth-me'))
         self.assertIn(
@@ -151,7 +159,7 @@ class SessionSwitchingIsolationTests(APITestCase):
         self.assertEqual(delete_response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertTrue(Holding.objects.filter(id=user_a_holding_id).exists())
 
-        self.client.post(reverse('auth-logout'))
+        self.logout()
         self.login_as('switch_user_a')
         self.assert_holdings_symbols(['MSFT'])
         self.assert_summary_symbols(['MSFT'], user_a_portfolio.id)
