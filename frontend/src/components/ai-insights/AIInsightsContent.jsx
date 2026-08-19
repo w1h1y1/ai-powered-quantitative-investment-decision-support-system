@@ -4,6 +4,7 @@ import SecuritySearchSelect from '../security/SecuritySearchSelect'
 import { normalizeSecuritySearchOption } from '../security/securitySearchModel'
 import {
   formatAnalysisEnumLabel,
+  formatGeneratedAt,
   formatRatioAsPercent,
 } from './aiInsightsFormatting'
 import { agentAnalysisApi } from '../../services/agentAnalysisApi'
@@ -236,10 +237,11 @@ export function RiskFactorsCard({ analysis }) {
 }
 
 export function MetadataFooter({ metadata }) {
+  const generatedAt = formatGeneratedAt(metadata?.generated_at)
   return (
     <footer className="ai-insights-metadata">
       <span>
-        As of {metadata?.as_of_date || '—'} · {metadata?.provider === 'deepseek' ? 'DeepSeek' : metadata?.provider || '—'} · {metadata?.analysis_version || '—'}
+        {metadata?.is_restored ? 'Previous analysis' : 'Analysis'} · As of {metadata?.as_of_date || '—'} · Generated {generatedAt || '—'} · {metadata?.provider === 'deepseek' ? 'DeepSeek' : metadata?.provider || '—'} · {metadata?.analysis_version || '—'}
       </span>
     </footer>
   )
@@ -259,7 +261,10 @@ export default function AIInsightsContent() {
   const [analysisUnavailable, setAnalysisUnavailable] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState('')
   const requestIdRef = useRef(0)
+  const historyRequestIdRef = useRef(0)
 
   useEffect(() => {
     let ignore = false
@@ -329,10 +334,11 @@ export default function AIInsightsContent() {
 
     const requestId = requestIdRef.current + 1
     requestIdRef.current = requestId
+    historyRequestIdRef.current += 1
     setIsLoading(true)
-    setAnalysis(null)
     setAnalysisUnavailable('')
     setError('')
+    setHistoryError('')
 
     agentAnalysisApi.analyze({ symbol })
       .then((response) => {
@@ -345,7 +351,18 @@ export default function AIInsightsContent() {
           setError('The analysis response was empty.')
           return
         }
-        setAnalysis({ ...response.analysis, symbol, metadata: response.metadata })
+        setAnalysis({
+          ...response.analysis,
+          symbol,
+          metadata: {
+            as_of_date: response.metadata?.as_of_date,
+            analysis_version: response.metadata?.analysis_version,
+            provider: response.metadata?.provider,
+            model: response.metadata?.model,
+            generated_at: response.generated_at,
+            is_restored: false,
+          },
+        })
       })
       .catch((error) => {
         if (requestIdRef.current !== requestId || symbol !== selectedSymbol) return
@@ -355,6 +372,51 @@ export default function AIInsightsContent() {
         if (requestIdRef.current === requestId) setIsLoading(false)
       })
   }
+
+  useEffect(() => {
+    const symbol = selectedSymbol
+    if (!symbol) return undefined
+
+    const requestId = historyRequestIdRef.current + 1
+    historyRequestIdRef.current = requestId
+    setIsHistoryLoading(true)
+    setHistoryError('')
+
+    agentAnalysisApi.latest({ symbol })
+      .then((response) => {
+        if (historyRequestIdRef.current !== requestId || symbol !== selectedSymbol) return
+        if (response?.available && response.analysis) {
+          setAnalysis({
+            ...response.analysis,
+            symbol: response.symbol || symbol,
+            metadata: {
+              as_of_date: response.as_of_date,
+              analysis_version: response.analysis_version,
+              provider: response.provider,
+              model: response.model,
+              generated_at: response.generated_at,
+              is_restored: true,
+            },
+          })
+          setAnalysisUnavailable('')
+          setError('')
+        } else {
+          setAnalysis(null)
+          setAnalysisUnavailable('')
+          setError('')
+        }
+      })
+      .catch((error) => {
+        if (historyRequestIdRef.current !== requestId || symbol !== selectedSymbol) return
+        setAnalysis(null)
+        setHistoryError(error?.message || 'Unable to load previous analysis.')
+      })
+      .finally(() => {
+        if (historyRequestIdRef.current === requestId) setIsHistoryLoading(false)
+      })
+
+    return undefined
+  }, [selectedSymbol])
 
   return (
     <main className="main-content ai-insights-page-main">
@@ -395,20 +457,25 @@ export default function AIInsightsContent() {
           disabled={!selectedSymbol || isLoading || isSecuritiesLoading || isResolvingAsset}
           onClick={generateAnalysis}
         >
-          {isLoading ? 'Analyzing...' : 'Generate AI Analysis'}
+          {isLoading ? 'Analyzing...' : analysis ? 'Regenerate Analysis' : 'Generate AI Analysis'}
         </button>
       </section>
       {securitiesError && <p className="ai-insights-config-error" role="alert">{securitiesError}</p>}
 
+      {isHistoryLoading && !analysis ? (
+        <p className="ai-insights-history-status">Loading previous analysis...</p>
+      ) : null}
+      {historyError && !analysis ? (
+        <p className="ai-insights-history-error" role="alert">{historyError}</p>
+      ) : null}
+
       <div className="ai-insights-result-region">
         {isLoading ? (
           <LoadingState />
-        ) : analysisUnavailable ? (
-          <UnavailableState reason={analysisUnavailable} />
-        ) : error ? (
-          <ErrorState message={error} />
         ) : analysis ? (
           <>
+            {analysisUnavailable ? <UnavailableState reason={analysisUnavailable} /> : null}
+            {error ? <ErrorState message={error} /> : null}
             <DecisionSummaryCard analysis={analysis} />
             <OverviewCard analysis={analysis} metadata={analysis.metadata} />
             <div className="ai-insights-analysis-grid">
@@ -426,6 +493,10 @@ export default function AIInsightsContent() {
               <span>AI-generated decision support based on available system data. Historical performance does not guarantee future results.</span>
             </aside>
           </>
+        ) : analysisUnavailable ? (
+          <UnavailableState reason={analysisUnavailable} />
+        ) : error ? (
+          <ErrorState message={error} />
         ) : (
           <EmptyState symbol={selectedSymbol} />
         )}

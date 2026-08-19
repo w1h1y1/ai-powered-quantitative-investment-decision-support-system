@@ -8,4 +8,9 @@ export const agentAnalysisApi = {
       body: { symbol: normalizedSymbol },
     })
   },
+  latest({ symbol }) {
+    const normalizedSymbol = String(symbol ?? '').trim().toUpperCase()
+    const params = new URLSearchParams({ symbol: normalizedSymbol })
+    return apiRequest(`/api/agent/analysis/latest/?${params.toString()}`)
+  },
 }

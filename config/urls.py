@@ -20,6 +20,7 @@ from rest_framework.routers import DefaultRouter
 
 from agent.views import (
     AgentAnalysisView,
+    AgentAnalysisLatestView,
     AgentContextView,
     InvestmentAgentView,
     UnifiedAgentContextView,
@@ -59,6 +60,7 @@ urlpatterns = [
     path('api/agent-context/', AgentContextView.as_view(), name='agent-context'),
     path('api/agent/context/', UnifiedAgentContextView.as_view(), name='unified-agent-context'),
     path('api/agent/analyze/', AgentAnalysisView.as_view(), name='agent-analyze'),
+    path('api/agent/analysis/latest/', AgentAnalysisLatestView.as_view(), name='agent-analysis-latest'),
     path('api/investment-agent/', InvestmentAgentView.as_view(), name='investment-agent'),
     path('api/backtests/run/', BacktestRunView.as_view(), name='backtest-run'),
     path('api/strategy-evaluation/', StrategyEvaluationView.as_view(), name='strategy-evaluation'),

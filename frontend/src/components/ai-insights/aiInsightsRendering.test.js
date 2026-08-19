@@ -140,6 +140,35 @@ test('analysis unavailable and error states are explicit', () => {
   assert.match(render(components.ErrorState, { message: 'Please try again.' }), /Unable to generate AI analysis/)
 })
 
+test('metadata footer shows generated timestamp and restored marker', () => {
+  const text = render(components.MetadataFooter, {
+    metadata: {
+      generated_at: '2026-08-20T10:35:00',
+      as_of_date: '2026-08-18',
+      provider: 'deepseek',
+      analysis_version: 'agent_analysis_v1',
+      is_restored: true,
+    },
+  })
+  assert.match(text, /Previous analysis/)
+  assert.match(text, /As of 2026-08-18/)
+  assert.match(text, /Generated 20 Aug 2026/)
+  assert.match(text, /DeepSeek/)
+})
+
+test('metadata footer labels freshly generated analysis without the restored marker', () => {
+  const text = render(components.MetadataFooter, {
+    metadata: {
+      generated_at: '2026-08-20T10:35:00',
+      as_of_date: '2026-08-18',
+      analysis_version: 'agent_analysis_v1',
+      is_restored: false,
+    },
+  })
+  assert.match(text, /Analysis · As of 2026-08-18/)
+  assert.doesNotMatch(text, /Previous analysis/)
+})
+
 test('rendered analysis contains no trading recommendation language', () => {
   const text = render(components.OverallAssessmentCard, { analysis })
   assert.doesNotMatch(text, /\bBUY\b|\bSELL\b|\bHOLD\b|Target Price|Position Size/i)

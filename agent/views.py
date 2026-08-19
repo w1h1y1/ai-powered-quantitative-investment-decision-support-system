@@ -17,6 +17,10 @@ from market.services import MarketDataRateLimited, MarketDataUnavailable
 
 from .agent_context_service import build_agent_context
 from .agent_analysis_service import run_agent_analysis
+from .analysis_persistence import (
+    get_latest_successful_analysis,
+    save_successful_analysis,
+)
 from .investment_agent_service import run_investment_agent
 from .serializers import AgentContextQuerySerializer
 from .unified_context_service import build_unified_agent_context
@@ -156,4 +160,53 @@ class AgentAnalysisView(APIView):
         except MarketDataUnavailable as exc:
             return Response({'detail': str(exc)}, status=503)
 
+        if payload.get('analysis_status') == 'success' and payload.get('analysis'):
+            analysis_record = save_successful_analysis(
+                user=request.user,
+                security=serializer.resolved_security,
+                symbol=payload.get('symbol'),
+                as_of_date=payload.get('metadata', {}).get('as_of_date'),
+                context_version=payload.get('context_version'),
+                analysis_version=payload.get('metadata', {}).get('analysis_version'),
+                provider=payload.get('metadata', {}).get('provider'),
+                model=payload.get('metadata', {}).get('model'),
+                analysis=payload.get('analysis'),
+            )
+            payload['generated_at'] = analysis_record.generated_at.isoformat()
+
         return Response(payload)
+
+
+class AgentAnalysisLatestView(APIView):
+    """Return the latest successful analysis for the current user + symbol."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        serializer = AgentContextQuerySerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        security = serializer.resolved_security
+        analysis_record = get_latest_successful_analysis(request.user, security)
+
+        if analysis_record is None:
+            return Response({
+                'available': False,
+                'symbol': security.symbol,
+                'analysis': None,
+            })
+
+        return Response({
+            'available': True,
+            'symbol': analysis_record.symbol,
+            'generated_at': analysis_record.generated_at.isoformat(),
+            'as_of_date': (
+                analysis_record.as_of_date.isoformat()
+                if analysis_record.as_of_date
+                else None
+            ),
+            'context_version': analysis_record.context_version,
+            'analysis_version': analysis_record.analysis_version,
+            'provider': analysis_record.provider,
+            'model': analysis_record.model,
+            'analysis': analysis_record.analysis,
+        })
