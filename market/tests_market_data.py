@@ -369,6 +369,114 @@ class SecuritySymbolSearchTests(TestCase):
         self.assertFalse(payload['items'][0]['is_local'])
         self.assertEqual(Security.objects.count(), 0)
 
+    def test_exact_symbol_us_listing_ranks_first_among_provider_variants(self):
+        client = FakeTwelveDataClient(symbol_search_results=[
+            {
+                'symbol': 'TEST',
+                'instrument_name': 'Test Corp',
+                'exchange': 'SIX',
+                'mic_code': 'XSWX',
+                'instrument_type': 'Common Stock',
+                'country': 'Switzerland',
+                'currency': 'CHF',
+            },
+            {
+                'symbol': 'TEST',
+                'instrument_name': 'Test Corp',
+                'exchange': 'BMV',
+                'mic_code': 'XMEX',
+                'instrument_type': 'Common Stock',
+                'country': 'Mexico',
+                'currency': 'MXN',
+            },
+            {
+                'symbol': 'TEST',
+                'instrument_name': 'Test Corp',
+                'exchange': 'NASDAQ',
+                'mic_code': 'XNGS',
+                'instrument_type': 'Common Stock',
+                'country': 'United States',
+                'currency': 'USD',
+            },
+            {
+                'symbol': 'TEST',
+                'instrument_name': 'Test Corp',
+                'exchange': 'BVL',
+                'mic_code': 'XLIM',
+                'instrument_type': 'Common Stock',
+                'country': 'Peru',
+                'currency': 'USD',
+            },
+            {
+                'symbol': 'TEST.USD',
+                'instrument_name': 'Test Crypto',
+                'exchange': 'CRYPTO',
+                'mic_code': '',
+                'instrument_type': 'Digital Currency',
+                'country': 'United States',
+                'currency': 'USD',
+            },
+            {
+                'symbol': 'TEST1',
+                'instrument_name': 'Test One',
+                'exchange': 'NASDAQ',
+                'mic_code': 'XNGS',
+                'instrument_type': 'Common Stock',
+                'country': 'United States',
+                'currency': 'USD',
+            },
+        ])
+
+        payload = search_security_symbols('TEST', client=client)
+
+        symbols = [item['symbol'] for item in payload['items']]
+        self.assertEqual(symbols[0], 'TEST')
+        self.assertEqual(payload['items'][0]['exchange'], 'NASDAQ')
+        self.assertEqual(payload['items'][0]['mic_code'], 'XNGS')
+        international = [item for item in payload['items'] if item['symbol'] == 'TEST']
+        self.assertEqual(len(international), 4)
+        self.assertEqual([item['exchange'] for item in international], ['NASDAQ', 'BMV', 'BVL', 'SIX'])
+        self.assertNotIn('TEST.USD', symbols)
+        self.assertEqual(symbols[-1], 'TEST1')
+
+    def test_local_us_security_merges_with_provider_and_stays_first(self):
+        Security.objects.create(
+            symbol='AVGO',
+            name='Broadcom Inc.',
+            asset_type=Security.AssetType.STOCK,
+            exchange='NASDAQ',
+            mic_code='XNGS',
+            country='United States',
+            currency='USD',
+        )
+        client = FakeTwelveDataClient(symbol_search_results=[
+            {
+                'symbol': 'AVGO',
+                'instrument_name': 'Broadcom Inc.',
+                'exchange': 'NASDAQ',
+                'mic_code': 'XNGS',
+                'instrument_type': 'Common Stock',
+                'country': 'United States',
+                'currency': 'USD',
+            },
+            {
+                'symbol': 'AVGO',
+                'instrument_name': 'Broadcom Inc.',
+                'exchange': 'BMV',
+                'mic_code': 'XMEX',
+                'instrument_type': 'Common Stock',
+                'country': 'Mexico',
+                'currency': 'MXN',
+            },
+        ])
+
+        payload = search_security_symbols('AVGO', client=client)
+
+        self.assertEqual(payload['items'][0]['symbol'], 'AVGO')
+        self.assertEqual(payload['items'][0]['exchange'], 'NASDAQ')
+        self.assertTrue(payload['items'][0]['is_local'])
+        self.assertEqual(payload['items'][1]['exchange'], 'BMV')
+
 
 class TwelveDataParsingTests(TestCase):
     def test_parse_bar_uses_decimal_values_and_integer_volume(self):

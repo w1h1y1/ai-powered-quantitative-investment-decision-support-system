@@ -80,6 +80,24 @@ export function normalizeSecurity(security) {
   }
 }
 
+export function normalizeSearchResultToDashboardSecurity(result) {
+  if (!result?.id || !result.symbol) return null
+
+  const rawType = String(result.asset_type ?? result.type ?? '').toUpperCase()
+  const assetType = rawType.includes('ETF') ? 'ETF' : 'STOCK'
+  return {
+    id: result.id,
+    symbol: normalizeText(result.symbol).toUpperCase(),
+    name: normalizeText(result.name),
+    assetType,
+    exchange: normalizeText(result.exchange),
+    currency: normalizeText(result.currency).toUpperCase() || 'USD',
+    micCode: normalizeText(result.mic_code ?? result.micCode).toUpperCase(),
+    country: normalizeText(result.country),
+    isActive: true,
+  }
+}
+
 export function getActiveSecurities(response) {
   if (!Array.isArray(response)) return []
 

@@ -37,7 +37,7 @@ export default function DashboardSecuritySearch({
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
               event.preventDefault()
-              onSearch()
+              onSearch(query)
             }
           }}
         />
@@ -45,7 +45,7 @@ export default function DashboardSecuritySearch({
           className="dashboard-search-button"
           type="button"
           disabled={disabled || isSearching}
-          onClick={onSearch}
+          onClick={() => onSearch(query)}
         >
           {isSearching ? DASHBOARD_SEARCH_MESSAGES.searching : 'Search'}
         </button>

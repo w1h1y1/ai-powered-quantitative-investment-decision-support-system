@@ -210,7 +210,21 @@ PREFERRED_SECURITY_EXCHANGES = {
     'NYSEARCA',
     'NYSE AMERICAN',
 }
-PREFERRED_SECURITY_MIC_CODES = {'XNAS', 'XNYS', 'ARCX', 'XASE'}
+PREFERRED_SECURITY_MIC_CODES = {'XNAS', 'XNYS', 'ARCX', 'XASE', 'XNGS'}
+US_SECURITY_EXCHANGES = {
+    'NASDAQ',
+    'NASDAQ GLOBAL SELECT',
+    'NASDAQ GLOBAL MARKET',
+    'NASDAQ CAPITAL MARKET',
+    'NYSE',
+    'NEW YORK STOCK EXCHANGE',
+    'NYSE ARCA',
+    'NYSEARCA',
+    'NYSE AMERICAN',
+    'AMEX',
+    'AMERICAN STOCK EXCHANGE',
+}
+US_SECURITY_MIC_CODES = {'XNAS', 'XNYS', 'XASE', 'ARCX', 'XNGS'}
 
 _symbol_search_locks = {}
 _symbol_search_locks_guard = Lock()
@@ -533,12 +547,20 @@ def get_security_search_rank(result, query):
     else:
         match_score = 60
 
+    is_us_listing = exchange in US_SECURITY_EXCHANGES or mic_code in US_SECURITY_MIC_CODES
+    if asset_type == Security.AssetType.STOCK:
+        asset_rank = 0
+    elif asset_type == Security.AssetType.ETF:
+        asset_rank = 1
+    else:
+        asset_rank = 2
+
     return (
         match_score,
-        0 if result.is_local else 1,
-        0 if asset_type in SUPPORTED_MARKET_DATA_ASSET_TYPES else 1,
+        0 if is_us_listing else 1,
+        asset_rank,
         0 if country in PREFERRED_SECURITY_COUNTRIES else 1,
-        0 if exchange in PREFERRED_SECURITY_EXCHANGES or mic_code in PREFERRED_SECURITY_MIC_CODES else 1,
+        0 if result.is_local else 1,
         result.symbol,
         result.exchange,
     )

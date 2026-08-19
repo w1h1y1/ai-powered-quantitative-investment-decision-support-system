@@ -30,6 +30,7 @@ export function updateDashboardSearchQuery(state, query) {
     ...state,
     query,
     results: [],
+    isSearching: false,
     hasSearched: false,
     error: '',
     detail: '',

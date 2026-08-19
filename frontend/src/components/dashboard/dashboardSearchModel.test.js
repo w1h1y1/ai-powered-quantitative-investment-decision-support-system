@@ -205,14 +205,33 @@ test('Given a selection has been made, When search is cleared, Then the search s
 test('The dashboard search control wires Enter and the Search button to the same onSearch handler and only updates the query while typing', () => {
   const source = readFileSync(new URL('./DashboardSecuritySearch.jsx', import.meta.url), 'utf8')
 
-  assert.match(source, /onClick=\{onSearch\}/)
+  assert.match(source, /onClick=\{\(\) => onSearch\(query\)\}/)
   assert.match(source, /event\.key === 'Enter'/)
-  assert.match(source, /onSearch\(\)/)
+  assert.match(source, /onSearch\(query\)/)
   assert.match(source, /onChange=\{\(event\) => onQueryChange\(event\.target\.value\)\}/)
   assert.match(source, /'Search'/)
   assert.match(source, /DASHBOARD_SEARCH_MESSAGES\.searching/)
   assert.match(source, /dashboardSearchStatus\(/)
   assert.match(source, /resolvedStatus\.message/)
+})
+
+test('DashboardContent debounces autocomplete, shares one search handler, and guards stale requests', () => {
+  const source = readFileSync(new URL('./DashboardContent.jsx', import.meta.url), 'utf8')
+
+  assert.match(source, /securitySearchDebounceMs/)
+  assert.match(source, /securitySearchMinimumCharacters/)
+  assert.match(source, /window\.setTimeout\(/)
+  assert.match(source, /runDashboardSearch\(query\)/)
+  assert.match(source, /securitySearchRequestIdRef\.current !== requestId/)
+  assert.match(source, /securitySearchTimerRef\.current/)
+})
+
+test('DashboardContent selects a local search result by upserting it and switching the selected security', () => {
+  const source = readFileSync(new URL('./DashboardContent.jsx', import.meta.url), 'utf8')
+
+  assert.match(source, /normalizeSearchResultToDashboardSecurity\(searchResult\)/)
+  assert.match(source, /upsertDashboardSecurity\(currentSecurities, dashboardSecurity\)/)
+  assert.match(source, /updateSelectedSecurity\(String\(dashboardSecurity\.id\), dashboardSecurity\)/)
 })
 
 test('DashboardContent keeps search state separate from the selected security and preserves the stale-response guard', () => {

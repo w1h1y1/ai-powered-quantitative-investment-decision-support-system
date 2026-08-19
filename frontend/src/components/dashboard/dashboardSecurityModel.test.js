@@ -22,6 +22,7 @@ import {
   normalizeDashboardVisibleWindow,
   normalizeHoldingsToDashboardSecurities,
   normalizeMarketSummary,
+  normalizeSearchResultToDashboardSecurity,
   panDashboardVisibleWindow,
   readStoredSecurityId,
   resolveSelectedSecurityId,
@@ -72,6 +73,54 @@ test('normalizes API securities and keeps only active records', () => {
     country: '',
     isActive: true,
   }])
+})
+
+test('maps a local search result option to the Dashboard security schema', () => {
+  const option = {
+    id: 10,
+    symbol: 'AVGO',
+    name: 'Broadcom Inc.',
+    asset: 'Broadcom Inc.',
+    type: 'Stock',
+    exchange: 'NASDAQ',
+    mic_code: 'XNGS',
+    instrument_type: 'Common Stock',
+    country: 'United States',
+    currency: 'USD',
+    is_local: true,
+    source: 'local',
+  }
+
+  const security = normalizeSearchResultToDashboardSecurity(option)
+
+  assert.deepEqual(security, {
+    id: 10,
+    symbol: 'AVGO',
+    name: 'Broadcom Inc.',
+    assetType: 'STOCK',
+    exchange: 'NASDAQ',
+    currency: 'USD',
+    micCode: 'XNGS',
+    country: 'United States',
+    isActive: true,
+  })
+})
+
+test('maps an ETF search result option to the Dashboard security schema', () => {
+  const option = {
+    id: 8,
+    symbol: 'QQQ',
+    name: 'Invesco QQQ ETF',
+    type: 'ETF',
+    exchange: 'NASDAQ',
+    mic_code: 'XNAS',
+    currency: 'USD',
+  }
+
+  const security = normalizeSearchResultToDashboardSecurity(option)
+
+  assert.equal(security.assetType, 'ETF')
+  assert.equal(security.isActive, true)
 })
 
 test('adds a remotely resolved Security once and keeps the universe sorted', () => {

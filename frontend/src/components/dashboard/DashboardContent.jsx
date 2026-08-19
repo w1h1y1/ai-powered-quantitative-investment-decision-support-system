@@ -39,6 +39,7 @@ import {
   normalizeHoldingsToDashboardSecurities,
   normalizeMarketData,
   normalizeMarketSummary,
+  normalizeSearchResultToDashboardSecurity,
   normalizeSecurity,
   readStoredSecurityId,
   resolveSelectedSecurityId,
@@ -47,6 +48,10 @@ import {
   validateCustomMarketDataRange,
   writeStoredSecurityId,
 } from './dashboardSecurityModel'
+import {
+  securitySearchDebounceMs,
+  securitySearchMinimumCharacters,
+} from '../security/securitySearchModel'
 
 const popularDashboardSecurities = [
   {
@@ -288,6 +293,7 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
   const watchlistRequestIdRef = useRef(0)
   const portfolioSummaryRequestIdRef = useRef(0)
   const securitySearchRequestIdRef = useRef(0)
+  const securitySearchTimerRef = useRef(null)
 
   useEffect(() => {
     let isMounted = true
@@ -567,9 +573,13 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
     setSecuritySearch((current) => updateDashboardSearchQuery(current, query))
   }, [])
 
-  const runDashboardSearch = useCallback(async () => {
-    const query = securitySearch.query.trim()
+  const runDashboardSearch = useCallback(async (rawQuery) => {
+    const query = String(rawQuery ?? '').trim()
     if (!query) return
+    if (securitySearchTimerRef.current) {
+      window.clearTimeout(securitySearchTimerRef.current)
+      securitySearchTimerRef.current = null
+    }
 
     const requestId = securitySearchRequestIdRef.current + 1
     securitySearchRequestIdRef.current = requestId
@@ -583,7 +593,27 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
       if (securitySearchRequestIdRef.current !== requestId) return
       setSecuritySearch((current) => failDashboardSearch(current, error?.message))
     }
-  }, [securitySearch.query, securities])
+  }, [securities])
+
+  useEffect(() => {
+    const query = securitySearch.query.trim()
+    if (query.length < securitySearchMinimumCharacters) return undefined
+
+    if (securitySearchTimerRef.current) {
+      window.clearTimeout(securitySearchTimerRef.current)
+    }
+    securitySearchTimerRef.current = window.setTimeout(() => {
+      securitySearchTimerRef.current = null
+      runDashboardSearch(query)
+    }, securitySearchDebounceMs)
+
+    return () => {
+      if (securitySearchTimerRef.current) {
+        window.clearTimeout(securitySearchTimerRef.current)
+        securitySearchTimerRef.current = null
+      }
+    }
+  }, [runDashboardSearch, securitySearch.query])
 
   const selectSecuritySearchResult = async (searchResult) => {
     if (!searchResult || isResolvingSecurity) return
@@ -592,7 +622,12 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
     hasUserSelectedSecurityRef.current = true
 
     if (searchResult.id) {
-      updateSelectedSecurity(String(searchResult.id))
+      const dashboardSecurity = normalizeSearchResultToDashboardSecurity(searchResult)
+      if (!dashboardSecurity) return
+      setSecurities((currentSecurities) => (
+        upsertDashboardSecurity(currentSecurities, dashboardSecurity)
+      ))
+      updateSelectedSecurity(String(dashboardSecurity.id), dashboardSecurity)
       return
     }
 
