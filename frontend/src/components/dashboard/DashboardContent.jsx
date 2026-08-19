@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import SecuritySearchSelect from '../security/SecuritySearchSelect'
 import { marketDataApi } from '../../services/marketDataApi'
 import { holdingApi } from '../../services/holdingApi'
 import { portfolioApi } from '../../services/portfolioApi'
@@ -15,6 +14,15 @@ import PortfolioSummary from './PortfolioSummary'
 import PriceChart from './PriceChart'
 import TechnicalIndicators from './TechnicalIndicators'
 import Watchlist from './Watchlist'
+import DashboardSecuritySearch from './DashboardSecuritySearch'
+import {
+  clearDashboardSearch,
+  createDashboardSearchState,
+  failDashboardSearch,
+  resolveDashboardSearch,
+  startDashboardSearch,
+  updateDashboardSearchQuery,
+} from './dashboardSearchModel'
 import {
   buildDashboardPriceChart,
   buildDashboardTechnicalIndicators,
@@ -126,7 +134,14 @@ function PopularSecurityChips({ onSelect }) {
 function SecuritySelectorPanel({
   isResolvingSecurity,
   onSearchResultSelect,
+  onSearchQueryChange,
+  onSearchSubmit,
   resolveError,
+  searchError,
+  searchHasSearched,
+  searchIsSearching,
+  searchQuery,
+  searchResults,
   selectedSecurity,
   securities,
 }) {
@@ -147,12 +162,16 @@ function SecuritySelectorPanel({
       <div className="dashboard-security-controls">
         <label className="dashboard-security-search">
           <span>Search securities</span>
-          <SecuritySearchSelect
+          <DashboardSecuritySearch
             id="dashboard-security-search"
-            clearSelectionOnEdit={false}
             disabled={isResolvingSecurity}
-            localSecurities={securities}
-            selectedSecurity={null}
+            error={searchError}
+            hasSearched={searchHasSearched}
+            isSearching={searchIsSearching}
+            query={searchQuery}
+            results={searchResults}
+            onQueryChange={onSearchQueryChange}
+            onSearch={onSearchSubmit}
             onSelect={onSearchResultSelect}
           />
           {resolveError ? <small className="dashboard-security-resolve-error">{resolveError}</small> : null}
@@ -252,6 +271,7 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
   const [securityError, setSecurityError] = useState('')
   const [isResolvingSecurity, setIsResolvingSecurity] = useState(false)
   const [securityResolveError, setSecurityResolveError] = useState('')
+  const [securitySearch, setSecuritySearch] = useState(() => createDashboardSearchState())
   const [marketData, setMarketData] = useState(null)
   const [isMarketDataLoading, setIsMarketDataLoading] = useState(false)
   const [marketDataError, setMarketDataError] = useState('')
@@ -265,6 +285,7 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
   const marketDataRequestIdRef = useRef(0)
   const watchlistRequestIdRef = useRef(0)
   const portfolioSummaryRequestIdRef = useRef(0)
+  const securitySearchRequestIdRef = useRef(0)
 
   useEffect(() => {
     let isMounted = true
@@ -526,21 +547,46 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
     [selectedPriceChart],
   )
 
-  const updateSelectedSecurity = (securityId) => {
+  const updateSelectedSecurity = (securityId, securityOverride = null) => {
     hasUserSelectedSecurityRef.current = true
-    setSelectedSecurityId(securityId)
-    setSelectedSecurity(
-      securities.find((security) => String(security.id) === String(securityId)) ?? null,
-    )
-    writeStoredSecurityId(securityId)
+    const nextSecurity = securityOverride
+      ?? securities.find((security) => String(security.id) === String(securityId))
+      ?? null
+    if (!nextSecurity) return
+    setSelectedSecurityId(String(nextSecurity.id))
+    setSelectedSecurity(nextSecurity)
+    writeStoredSecurityId(String(nextSecurity.id))
     setMarketData(null)
     setMarketDataError('')
     setIsMarketDataLoading(true)
   }
 
+  const handleSecuritySearchQueryChange = useCallback((query) => {
+    setSecuritySearch((current) => updateDashboardSearchQuery(current, query))
+  }, [])
+
+  const runDashboardSearch = useCallback(async () => {
+    const query = securitySearch.query.trim()
+    if (!query) return
+
+    const requestId = securitySearchRequestIdRef.current + 1
+    securitySearchRequestIdRef.current = requestId
+    setSecuritySearch((current) => startDashboardSearch(current))
+
+    try {
+      const payload = await securityApi.search(query)
+      if (securitySearchRequestIdRef.current !== requestId) return
+      setSecuritySearch((current) => resolveDashboardSearch(current, payload, securities, query))
+    } catch {
+      if (securitySearchRequestIdRef.current !== requestId) return
+      setSecuritySearch((current) => failDashboardSearch(current))
+    }
+  }, [securitySearch.query, securities])
+
   const selectSecuritySearchResult = async (searchResult) => {
     if (!searchResult || isResolvingSecurity) return
     setSecurityResolveError('')
+    setSecuritySearch((current) => clearDashboardSearch(current))
     hasUserSelectedSecurityRef.current = true
 
     if (searchResult.id) {
@@ -561,8 +607,7 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
       setSecurities((currentSecurities) => (
         upsertDashboardSecurity(currentSecurities, { ...resolvedSecurity, isActive: true })
       ))
-      updateSelectedSecurity(String(resolvedSecurity.id))
-      setSelectedSecurity(resolvedSecurity)
+      updateSelectedSecurity(String(resolvedSecurity.id), resolvedSecurity)
     } catch (error) {
       setSecurityResolveError(error?.message || 'Unable to add the selected security. Please try again.')
     } finally {
@@ -644,7 +689,14 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
         <SecuritySelectorPanel
           isResolvingSecurity={isResolvingSecurity}
           onSearchResultSelect={selectSecuritySearchResult}
+          onSearchQueryChange={handleSecuritySearchQueryChange}
+          onSearchSubmit={runDashboardSearch}
           resolveError={securityResolveError}
+          searchError={securitySearch.error}
+          searchHasSearched={securitySearch.hasSearched}
+          searchIsSearching={securitySearch.isSearching}
+          searchQuery={securitySearch.query}
+          searchResults={securitySearch.results}
           selectedSecurity={selectedSecurity}
           securities={securities}
         />
@@ -654,13 +706,17 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
           <h2>Search for a security.</h2>
           <span>Select any supported symbol to view its market data, chart, and technical indicators.</span>
           <div className="dashboard-security-search dashboard-security-search-empty">
-            <SecuritySearchSelect
+            <DashboardSecuritySearch
               id="dashboard-empty-security-search"
-              localSecurities={securities}
-              selectedSecurity={null}
-              onSelect={selectSecuritySearchResult}
               disabled={isResolvingSecurity}
-              clearSelectionOnEdit={false}
+              error={securitySearch.error}
+              hasSearched={securitySearch.hasSearched}
+              isSearching={securitySearch.isSearching}
+              query={securitySearch.query}
+              results={securitySearch.results}
+              onQueryChange={handleSecuritySearchQueryChange}
+              onSearch={runDashboardSearch}
+              onSelect={selectSecuritySearchResult}
             />
           </div>
           <PopularSecurityChips onSelect={selectSecuritySearchResult} />
