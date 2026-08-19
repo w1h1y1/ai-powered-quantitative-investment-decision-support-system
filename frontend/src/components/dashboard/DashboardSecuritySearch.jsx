@@ -29,7 +29,7 @@ export default function DashboardSecuritySearch({
           id={id}
           type="search"
           value={query}
-          placeholder="Search symbol or company name, e.g. AVGO"
+          placeholder="Search symbol or company name, e.g. AAPL or Apple"
           autoComplete="off"
           disabled={disabled}
           aria-label="Search securities"
