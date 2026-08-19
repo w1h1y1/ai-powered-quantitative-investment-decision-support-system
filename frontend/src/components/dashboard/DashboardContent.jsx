@@ -138,6 +138,7 @@ function SecuritySelectorPanel({
   onSearchSubmit,
   resolveError,
   searchError,
+  searchNotice,
   searchHasSearched,
   searchIsSearching,
   searchQuery,
@@ -166,6 +167,7 @@ function SecuritySelectorPanel({
             id="dashboard-security-search"
             disabled={isResolvingSecurity}
             error={searchError}
+            notice={searchNotice}
             hasSearched={searchHasSearched}
             isSearching={searchIsSearching}
             query={searchQuery}
@@ -577,9 +579,9 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
       const payload = await securityApi.search(query)
       if (securitySearchRequestIdRef.current !== requestId) return
       setSecuritySearch((current) => resolveDashboardSearch(current, payload, securities, query))
-    } catch {
+    } catch (error) {
       if (securitySearchRequestIdRef.current !== requestId) return
-      setSecuritySearch((current) => failDashboardSearch(current))
+      setSecuritySearch((current) => failDashboardSearch(current, error?.message))
     }
   }, [securitySearch.query, securities])
 
@@ -693,6 +695,7 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
           onSearchSubmit={runDashboardSearch}
           resolveError={securityResolveError}
           searchError={securitySearch.error}
+          searchNotice={securitySearch.notice}
           searchHasSearched={securitySearch.hasSearched}
           searchIsSearching={securitySearch.isSearching}
           searchQuery={securitySearch.query}
@@ -710,6 +713,7 @@ export default function DashboardContent({ data, onOpenPortfolio, onOpenWatchlis
               id="dashboard-empty-security-search"
               disabled={isResolvingSecurity}
               error={securitySearch.error}
+              notice={securitySearch.notice}
               hasSearched={securitySearch.hasSearched}
               isSearching={securitySearch.isSearching}
               query={securitySearch.query}

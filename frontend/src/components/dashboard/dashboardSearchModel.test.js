@@ -38,6 +38,23 @@ function remoteXom() {
   }
 }
 
+function backendSearchItem(overrides = {}) {
+  return {
+    id: null,
+    symbol: 'XOM',
+    name: 'Exxon Mobil Corporation',
+    exchange: 'NYSE',
+    mic_code: 'XNYS',
+    instrument_type: 'Common Stock',
+    country: 'United States',
+    currency: 'USD',
+    is_local: false,
+    source: 'remote',
+    is_preferred: true,
+    ...overrides,
+  }
+}
+
 test('Given AAPL selected, When the user types XOM into the search box, Then only the query changes and no selection state exists in the search slice', () => {
   const state = createDashboardSearchState({ query: '', results: [], isSearching: false, hasSearched: false, error: '' })
 
@@ -70,13 +87,46 @@ test('Given a remote XOM result from the API, When the search resolves, Then XOM
   const state = createDashboardSearchState({ query: 'XOM' })
   const started = startDashboardSearch(state)
 
-  const next = resolveDashboardSearch(started, { items: [remoteXom()] }, [aapl], 'XOM')
+  const next = resolveDashboardSearch(started, { items: [backendSearchItem()] }, [aapl], 'XOM')
 
   assert.equal(next.isSearching, false)
   assert.equal(next.hasSearched, true)
   assert.equal(next.error, '')
   assert.deepEqual(next.results.map((item) => item.symbol), ['XOM'])
   assert.equal(next.results[0].is_local, false)
+})
+
+test('Given a backend search payload containing AVGO, When the search resolves, Then AVGO is merged into the result list', () => {
+  const state = createDashboardSearchState({ query: 'AVGO' })
+  const started = startDashboardSearch(state)
+  const avgo = backendSearchItem({
+    id: null,
+    symbol: 'AVGO',
+    name: 'Broadcom Inc.',
+    exchange: 'NASDAQ',
+    mic_code: 'XNGS',
+    is_local: false,
+    source: 'remote',
+  })
+
+  const next = resolveDashboardSearch(started, { items: [avgo] }, [aapl], 'AVGO')
+
+  assert.deepEqual(next.results.map((item) => item.symbol), ['AVGO'])
+  assert.equal(next.results[0].id, null)
+  assert.equal(next.results[0].is_local, false)
+})
+
+test('Given remote MU and JPM results, When the search resolves, Then they are merged without any symbol-specific logic', () => {
+  const state = createDashboardSearchState({ query: 'MU' })
+  const started = startDashboardSearch(state)
+  const mu = backendSearchItem({ symbol: 'MU', name: 'Micron Technology, Inc.', exchange: 'NASDAQ', mic_code: 'XNGS' })
+  const jpm = backendSearchItem({ symbol: 'JPM', name: 'JPMorgan Chase & Co.', exchange: 'NYSE', mic_code: 'XNYS' })
+
+  const muResults = resolveDashboardSearch(started, { items: [mu] }, [aapl], 'MU')
+  const jpmResults = resolveDashboardSearch(createDashboardSearchState({ query: 'JPM' }), { items: [jpm] }, [aapl], 'JPM')
+
+  assert.deepEqual(muResults.results.map((item) => item.symbol), ['MU'])
+  assert.deepEqual(jpmResults.results.map((item) => item.symbol), ['JPM'])
 })
 
 test('Given a search with no matches, Then the UI status shows the explicit no-result message', () => {
@@ -91,17 +141,35 @@ test('Given a search with no matches, Then the UI status shows the explicit no-r
   })
 })
 
-test('Given a search API failure, Then the error message is explicit and previous results are cleared', () => {
+test('Given a backend remote_error with no results, Then the provider notice is shown instead of a fake no-result message', () => {
+  const state = createDashboardSearchState({ query: 'AVGO' })
+  const resolved = resolveDashboardSearch(
+    startDashboardSearch(state),
+    { items: [], metadata: { remote_error: 'Remote security search is temporarily unavailable. Local results are shown.' } },
+    [aapl],
+    'AVGO',
+  )
+
+  assert.deepEqual(resolved.results, [])
+  assert.deepEqual(dashboardSearchStatus(resolved), {
+    kind: 'notice',
+    message: 'Remote security search is temporarily unavailable. Local results are shown.',
+  })
+})
+
+test('Given a search API failure, Then the error message is explicit, previous results are cleared, and the backend detail is surfaced', () => {
   const state = createDashboardSearchState({ query: 'XOM', results: [{ symbol: 'XOM' }] })
 
-  const failed = failDashboardSearch(startDashboardSearch(state))
+  const failed = failDashboardSearch(startDashboardSearch(state), 'Market data provider rate limit reached. Please try again later.')
 
   assert.equal(failed.error, DASHBOARD_SEARCH_MESSAGES.failure)
+  assert.equal(failed.detail, 'Market data provider rate limit reached. Please try again later.')
   assert.deepEqual(failed.results, [])
   assert.equal(failed.hasSearched, true)
   assert.deepEqual(dashboardSearchStatus(failed), {
     kind: 'error',
     message: DASHBOARD_SEARCH_MESSAGES.failure,
+    detail: 'Market data provider rate limit reached. Please try again later.',
   })
 })
 
@@ -121,7 +189,7 @@ test('The dashboard search control wires Enter and the Search button to the same
   assert.match(source, /'Search'/)
   assert.match(source, /DASHBOARD_SEARCH_MESSAGES\.searching/)
   assert.match(source, /dashboardSearchStatus\(/)
-  assert.match(source, /status\.message/)
+  assert.match(source, /resolvedStatus\.message/)
 })
 
 test('DashboardContent keeps search state separate from the selected security and preserves the stale-response guard', () => {
@@ -134,4 +202,16 @@ test('DashboardContent keeps search state separate from the selected security an
   assert.match(source, /onSelect=\{selectSecuritySearchResult\}/)
   assert.match(source, /shouldApplyMarketDataResponse\(marketDataRequestIdRef\.current, requestId\)/)
   assert.match(source, /marketDataResponseMatchesRequest\(response, requestParams\)/)
+})
+
+test('The dashboard search flow contains no hardcoded AVGO/MU/XOM/JPM branches and resolves remote results through the existing API', () => {
+  const source = readFileSync(new URL('./DashboardContent.jsx', import.meta.url), 'utf8')
+
+  assert.doesNotMatch(source, /'AVGO'/)
+  assert.doesNotMatch(source, /'MU'/)
+  assert.doesNotMatch(source, /'XOM'/)
+  assert.doesNotMatch(source, /'JPM'/)
+  assert.match(source, /securityApi\.search\(query\)/)
+  assert.match(source, /securityApi\.resolve\(\{/)
+  assert.match(source, /updateSelectedSecurity\(String\(resolvedSecurity\.id\), resolvedSecurity\)/)
 })

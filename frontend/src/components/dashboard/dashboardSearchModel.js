@@ -19,6 +19,8 @@ export function createDashboardSearchState(initial = {}) {
     isSearching: false,
     hasSearched: false,
     error: '',
+    detail: '',
+    notice: '',
     ...initial,
   }
 }
@@ -30,6 +32,8 @@ export function updateDashboardSearchQuery(state, query) {
     results: [],
     hasSearched: false,
     error: '',
+    detail: '',
+    notice: '',
   }
 }
 
@@ -50,16 +54,20 @@ export function resolveDashboardSearch(state, payload, localSecurities, query) {
     isSearching: false,
     hasSearched: true,
     error: '',
+    detail: '',
+    notice: String(payload?.metadata?.remote_error || ''),
   }
 }
 
-export function failDashboardSearch(state) {
+export function failDashboardSearch(state, detail = '') {
   return {
     ...state,
     results: [],
     isSearching: false,
     hasSearched: true,
     error: DASHBOARD_SEARCH_MESSAGES.failure,
+    detail: detail && detail !== DASHBOARD_SEARCH_MESSAGES.failure ? detail : '',
+    notice: '',
   }
 }
 
@@ -69,7 +77,10 @@ export function clearDashboardSearch(state) {
 
 export function dashboardSearchStatus(state) {
   if (state.isSearching) return { kind: 'searching', message: DASHBOARD_SEARCH_MESSAGES.searching }
-  if (state.error) return { kind: 'error', message: DASHBOARD_SEARCH_MESSAGES.failure }
+  if (state.error) return { kind: 'error', message: DASHBOARD_SEARCH_MESSAGES.failure, detail: state.detail }
+  if (state.hasSearched && !state.results.length && state.notice) {
+    return { kind: 'notice', message: state.notice }
+  }
   if (state.hasSearched && !state.results.length) {
     return { kind: 'empty', message: DASHBOARD_SEARCH_MESSAGES.noResults }
   }

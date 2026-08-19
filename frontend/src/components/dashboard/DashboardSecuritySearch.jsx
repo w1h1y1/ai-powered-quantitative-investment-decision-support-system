@@ -12,11 +12,14 @@ export default function DashboardSecuritySearch({
   isSearching = false,
   hasSearched = false,
   error = '',
+  detail = '',
+  notice = '',
   onQueryChange,
   onSearch,
   onSelect,
 }) {
   const status = dashboardSearchStatus({ query, results, isSearching, hasSearched, error })
+  const resolvedStatus = { ...status, detail: status.kind === 'error' ? detail : '' }
   const showStatus = status.kind !== 'idle'
 
   return (
@@ -50,7 +53,8 @@ export default function DashboardSecuritySearch({
 
       {showStatus && (
         <p className={`dashboard-search-status${status.kind === 'error' ? ' is-error' : ''}`} role={status.kind === 'error' ? 'alert' : undefined}>
-          {status.message}
+          {resolvedStatus.message}
+          {resolvedStatus.detail ? <span className="dashboard-search-detail"> {resolvedStatus.detail}</span> : null}
         </p>
       )}
 
@@ -83,6 +87,10 @@ export default function DashboardSecuritySearch({
             })}
           </ul>
         </div>
+      )}
+
+      {notice && results.length > 0 && (
+        <p className="dashboard-search-notice">{notice}</p>
       )}
     </div>
   )
