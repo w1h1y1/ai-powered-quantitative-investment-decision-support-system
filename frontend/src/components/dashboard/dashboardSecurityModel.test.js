@@ -405,6 +405,38 @@ test('switching from SPY to remote XOM requests XOM data and rejects stale SPY r
   assert.notEqual(xomRequest.securityId, spy.id)
 })
 
+test('switching to remote AVGO builds an AVGO market-data request and rejects stale MU responses', () => {
+  const avgo = getActiveSecurities([
+    security({ id: 10, symbol: 'AVGO', name: 'Broadcom Inc.', exchange: 'NASDAQ', mic_code: 'XNGS' }),
+  ])[0]
+  const mu = getActiveSecurities([
+    security({ id: 11, symbol: 'MU', name: 'Micron Technology, Inc.', exchange: 'NASDAQ', mic_code: 'XNGS' }),
+  ])[0]
+
+  const avgoRequest = buildMarketDataRequestParams({
+    security: avgo,
+    range: '6M',
+    interval: '1day',
+    customRange: null,
+  })
+
+  assert.deepEqual(avgoRequest, { securityId: 10, range: '6M', interval: '1day' })
+  assert.equal(
+    marketDataResponseMatchesRequest(
+      { security: { id: 11, symbol: 'MU' }, range: '6M', interval: '1day' },
+      avgoRequest,
+    ),
+    false,
+  )
+  assert.equal(
+    marketDataResponseMatchesRequest(
+      { security: { id: 10, symbol: 'AVGO' }, range: '6M', interval: '1day' },
+      avgoRequest,
+    ),
+    true,
+  )
+})
+
 test('builds dashboard chart from selected Security plus real backend OHLCV', () => {
   const selectedSecurity = getActiveSecurities([
     security({ id: 2, symbol: 'MSFT', name: 'Microsoft Corporation' }),

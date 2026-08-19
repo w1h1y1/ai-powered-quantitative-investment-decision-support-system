@@ -1522,6 +1522,61 @@ class SecurityResolveApiTests(APITestCase):
         self.assertFalse(second.data['created'])
         self.assertEqual(Security.objects.filter(symbol='JPM', mic_code='XNYS').count(), 1)
 
+    def assert_remote_resolve_creates_active_security_once(self, **item_overrides):
+        item = {**self.remote_item, **item_overrides}
+        payload = self.search_payload(item)
+
+        with patch('market.services.search_security_symbols', return_value=payload):
+            first = self.client.post(
+                reverse('security-resolve'),
+                {**item, 'search_query': item['symbol']},
+                format='json',
+            )
+            second = self.client.post(
+                reverse('security-resolve'),
+                {**item, 'search_query': item['symbol']},
+                format='json',
+            )
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(first.data['created'])
+        self.assertEqual(first.data['security']['symbol'], item['symbol'])
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertFalse(second.data['created'])
+        self.assertEqual(
+            Security.objects.filter(symbol=item['symbol'], mic_code=item['mic_code']).count(),
+            1,
+        )
+        security = Security.objects.get(symbol=item['symbol'], mic_code=item['mic_code'])
+        self.assertTrue(security.is_active)
+
+    def test_remote_resolve_avgo_creates_active_security_once(self):
+        self.assert_remote_resolve_creates_active_security_once(
+            symbol='AVGO',
+            name='Broadcom Inc.',
+            exchange='NASDAQ',
+            mic_code='XNGS',
+            instrument_type='Common Stock',
+        )
+
+    def test_remote_resolve_mu_creates_active_security_once(self):
+        self.assert_remote_resolve_creates_active_security_once(
+            symbol='MU',
+            name='Micron Technology, Inc.',
+            exchange='NASDAQ',
+            mic_code='XNGS',
+            instrument_type='Common Stock',
+        )
+
+    def test_remote_resolve_googl_creates_active_security_once(self):
+        self.assert_remote_resolve_creates_active_security_once(
+            symbol='GOOGL',
+            name='Alphabet Inc.',
+            exchange='NASDAQ',
+            mic_code='XNGS',
+            instrument_type='Common Stock',
+        )
+
     def test_selecting_remote_result_reactivates_matching_inactive_security(self):
         security = Security.objects.create(
             symbol='JPM',

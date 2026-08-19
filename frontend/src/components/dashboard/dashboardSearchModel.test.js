@@ -96,6 +96,16 @@ test('Given a remote XOM result from the API, When the search resolves, Then XOM
   assert.equal(next.results[0].is_local, false)
 })
 
+test('Given case and whitespace variants of AVGO, When the search resolves, Then the result symbol is normalized to AVGO', () => {
+  const avgo = backendSearchItem({ symbol: 'AVGO', name: 'Broadcom Inc.', exchange: 'NASDAQ', mic_code: 'XNGS' })
+
+  for (const rawQuery of ['avgo', 'AvGo', 'AVGO', ' AVGO', 'AVGO ', '  AVGO  ']) {
+    const state = createDashboardSearchState({ query: rawQuery })
+    const next = resolveDashboardSearch(startDashboardSearch(state), { items: [avgo] }, [aapl], rawQuery)
+    assert.deepEqual(next.results.map((item) => item.symbol), ['AVGO'])
+  }
+})
+
 test('Given a backend search payload containing AVGO, When the search resolves, Then AVGO is merged into the result list', () => {
   const state = createDashboardSearchState({ query: 'AVGO' })
   const started = startDashboardSearch(state)
@@ -171,6 +181,19 @@ test('Given a search API failure, Then the error message is explicit, previous r
     message: DASHBOARD_SEARCH_MESSAGES.failure,
     detail: 'Market data provider rate limit reached. Please try again later.',
   })
+})
+
+test('Given AAPL is the selected security, When the user types AVGO, searches, loads, and the search fails, Then the search slice never touches the selected security', () => {
+  const typed = updateDashboardSearchQuery(createDashboardSearchState(), 'AVGO')
+  const loading = startDashboardSearch(typed)
+  const failed = failDashboardSearch(loading, 'Market data provider rate limit reached. Please try again later.')
+
+  for (const state of [typed, loading, failed]) {
+    assert.equal('selectedSecurity' in state, false)
+    assert.equal('selectedSecurityId' in state, false)
+    assert.equal(state.query, 'AVGO')
+  }
+  assert.equal(failed.error, DASHBOARD_SEARCH_MESSAGES.failure)
 })
 
 test('Given a selection has been made, When search is cleared, Then the search slice returns to its idle empty state', () => {
