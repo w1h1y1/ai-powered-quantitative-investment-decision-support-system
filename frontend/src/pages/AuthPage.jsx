@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import Icon from '../components/Icon'
+import {
+  REGISTER_PASSWORD_HELP_TEXT,
+  validateRegisterPassword,
+} from '../utils/registerPasswordRules'
 
 const emptyForm = {
   username: '',
@@ -34,6 +38,7 @@ export default function AuthPage({ mode, onModeChange, onLogin, onRegister }) {
   const isRegister = mode === 'register'
   const [form, setForm] = useState(emptyForm)
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({})
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const title = isRegister ? 'Create your account' : 'Sign in to AI Quant'
@@ -49,12 +54,22 @@ export default function AuthPage({ mode, onModeChange, onLogin, onRegister }) {
 
   useEffect(() => {
     setError('')
+    setFieldErrors({})
     setForm(emptyForm)
   }, [mode])
 
   const updateField = (event) => {
     const { name, value } = event.target
     setForm((current) => ({ ...current, [name]: value }))
+    const fieldKey = name === 'password' ? 'password' : name === 'password_confirm' ? 'passwordConfirm' : null
+    if (fieldKey) {
+      setFieldErrors((current) => {
+        if (!current[fieldKey]) return current
+        const next = { ...current }
+        delete next[fieldKey]
+        return next
+      })
+    }
   }
 
   const handleSubmit = async (event) => {
@@ -62,6 +77,14 @@ export default function AuthPage({ mode, onModeChange, onLogin, onRegister }) {
     if (!canSubmit || isSubmitting) return
 
     setError('')
+    if (isRegister) {
+      const validation = validateRegisterPassword(form.password, form.password_confirm)
+      if (!validation.valid) {
+        setFieldErrors(validation.fieldErrors)
+        return
+      }
+    }
+    setFieldErrors({})
     setIsSubmitting(true)
     try {
       if (isRegister) {
@@ -156,6 +179,12 @@ export default function AuthPage({ mode, onModeChange, onLogin, onRegister }) {
               type="password"
               value={form.password}
             />
+            {isRegister && (
+              <small className="auth-hint">{REGISTER_PASSWORD_HELP_TEXT}</small>
+            )}
+            {isRegister && fieldErrors.password && (
+              <small className="auth-field-error" role="alert">{fieldErrors.password}</small>
+            )}
           </label>
 
           {isRegister && (
@@ -169,6 +198,9 @@ export default function AuthPage({ mode, onModeChange, onLogin, onRegister }) {
                 type="password"
                 value={form.password_confirm}
               />
+              {fieldErrors.passwordConfirm && (
+                <small className="auth-field-error" role="alert">{fieldErrors.passwordConfirm}</small>
+              )}
             </label>
           )}
 

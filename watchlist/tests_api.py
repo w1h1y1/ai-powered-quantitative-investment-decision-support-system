@@ -12,6 +12,8 @@ from rest_framework.test import APITestCase
 from market.models import Security, SecurityDailyPrice
 from market.services import MarketDataQuoteResult, MarketDataRateLimited, MarketDataResult
 
+from portfolio.models import Holding, Portfolio, TradeTransaction
+
 from .models import Watchlist, WatchlistItem
 
 
@@ -266,6 +268,60 @@ class WatchlistApiTests(APITestCase):
         self.assertEqual(response.data['status'], 'already_tracked')
         self.assertFalse(response.data['created_item'])
         self.assertEqual(WatchlistItem.objects.filter(watchlist=watchlist, security=self.security_a).count(), 1)
+
+    def test_add_symbol_does_not_modify_portfolio_state(self):
+        portfolio = Portfolio.objects.create(
+            user=self.user_a,
+            name='User A Portfolio',
+            available_funds=Decimal('5000.00'),
+            initial_balance=Decimal('5000.00'),
+        )
+        Holding.objects.create(
+            portfolio=portfolio,
+            security=self.security_a,
+            quantity=Decimal('10.000000'),
+            average_cost=Decimal('150.0000'),
+        )
+        self.authenticate_as(self.user_a)
+        search_payload = {
+            'query': 'AVGO',
+            'items': [
+                {
+                    'id': None,
+                    'symbol': 'AVGO',
+                    'name': 'Broadcom Inc.',
+                    'exchange': 'NASDAQ',
+                    'mic_code': 'XNAS',
+                    'instrument_type': 'Common Stock',
+                    'country': 'United States',
+                    'currency': 'USD',
+                    'is_local': False,
+                },
+            ],
+        }
+
+        with patch('watchlist.services.search_security_symbols', return_value=search_payload):
+            response = self.client.post(
+                reverse('watchlist-add-symbol'),
+                {
+                    'symbol': 'AVGO',
+                    'name': 'Broadcom Inc.',
+                    'exchange': 'NASDAQ',
+                    'mic_code': 'XNAS',
+                    'instrument_type': 'Common Stock',
+                    'country': 'United States',
+                    'currency': 'USD',
+                },
+                format='json',
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        portfolio.refresh_from_db()
+        self.assertEqual(portfolio.available_funds, Decimal('5000.00'))
+        self.assertEqual(portfolio.holdings.count(), 1)
+        self.assertEqual(portfolio.holdings.get().security.symbol, 'AAPL')
+        self.assertEqual(portfolio.trade_transactions.count(), 0)
+        self.assertEqual(portfolio.cash_flows.count(), 0)
 
     def test_add_symbol_preserves_market_data_rate_limit_error(self):
         self.authenticate_as(self.user_a)

@@ -88,6 +88,52 @@ class AgentContextApiTests(APITestCase):
         build.assert_called_once()
         self.assertEqual(build.call_args.args[0], self.security)
 
+    @patch('agent.views.build_agent_context')
+    def test_jpm_and_xom_resolve_to_their_own_contexts(self, build):
+        jpm = Security.objects.create(
+            symbol='JPM',
+            name='JPMorgan Chase & Co.',
+            asset_type=Security.AssetType.STOCK,
+            exchange='NYSE',
+            mic_code='XNYS',
+        )
+        xom = Security.objects.create(
+            symbol='XOM',
+            name='Exxon Mobil Corporation',
+            asset_type=Security.AssetType.STOCK,
+            exchange='NYSE',
+            mic_code='XNYS',
+        )
+
+        def context_for(security):
+            return {
+                **minimal_context(),
+                'symbol': security.symbol,
+                'security': {
+                    'id': security.id,
+                    'symbol': security.symbol,
+                    'name': security.name,
+                    'exchange': security.exchange,
+                    'currency': 'USD',
+                },
+            }
+
+        build.side_effect = context_for
+
+        for symbol, expected_security in (('JPM', jpm), ('XOM', xom)):
+            with self.subTest(symbol=symbol):
+                response = self.client.post(
+                    reverse('agent-context'),
+                    {'symbol': symbol},
+                    format='json',
+                )
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.data['symbol'], symbol)
+                self.assertEqual(response.data['security']['symbol'], symbol)
+                self.assertEqual(response.data['security']['id'], expected_security.id)
+                self.assertEqual(build.call_args.args[0], expected_security)
+
     def test_missing_symbol_returns_400_without_building(self):
         response = self.client.post(reverse('agent-context'), {}, format='json')
         self.assertEqual(response.status_code, 400)

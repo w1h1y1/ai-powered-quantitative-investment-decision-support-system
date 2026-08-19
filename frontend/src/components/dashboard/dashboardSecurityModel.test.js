@@ -373,6 +373,38 @@ test('accepts only market data responses matching the active security range and 
   }, { securityId: 1, range: 'Custom', interval: '1day' }), true)
 })
 
+test('switching from SPY to remote XOM requests XOM data and rejects stale SPY responses', () => {
+  const spy = getActiveSecurities([
+    security({ id: 9, symbol: 'SPY', name: 'SPDR S&P 500 ETF Trust', asset_type: 'ETF' }),
+  ])[0]
+  const xom = getActiveSecurities([
+    security({ id: 13, symbol: 'XOM', name: 'Exxon Mobil Corporation', exchange: 'NYSE', mic_code: 'XNYS' }),
+  ])[0]
+
+  const xomRequest = buildMarketDataRequestParams({
+    security: xom,
+    range: '6M',
+    interval: '1day',
+    customRange: null,
+  })
+  assert.deepEqual(xomRequest, { securityId: 13, range: '6M', interval: '1day' })
+
+  const spyResponse = {
+    security: { id: 9, symbol: 'SPY', name: 'SPDR S&P 500 ETF Trust' },
+    range: '6M',
+    interval: '1day',
+  }
+  const xomResponse = {
+    security: { id: 13, symbol: 'XOM', name: 'Exxon Mobil Corporation' },
+    range: '6M',
+    interval: '1day',
+  }
+
+  assert.equal(marketDataResponseMatchesRequest(spyResponse, xomRequest), false)
+  assert.equal(marketDataResponseMatchesRequest(xomResponse, xomRequest), true)
+  assert.notEqual(xomRequest.securityId, spy.id)
+})
+
 test('builds dashboard chart from selected Security plus real backend OHLCV', () => {
   const selectedSecurity = getActiveSecurities([
     security({ id: 2, symbol: 'MSFT', name: 'Microsoft Corporation' }),

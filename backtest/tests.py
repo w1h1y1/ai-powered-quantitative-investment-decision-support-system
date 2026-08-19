@@ -907,6 +907,11 @@ class MarketRegimeBacktestApiTests(APITestCase):
             self.assertIsNotNone(first_point[field])
         self.assertTrue(all(trade['signal_date'] >= self.start_date.isoformat() for trade in response.data['trades']))
         self.assertNotIn('win_rate', response.data)
+        self.assertIn('swing_win_rate', response.data)
+        self.assertIn('executed_order_count', response.data)
+        self.assertIn('total_return', response.data)
+        self.assertIn('maximum_drawdown', response.data)
+        self.assertIn('annualized_volatility', response.data)
 
     @patch('backtest.services.fetch_and_cache_daily_prices')
     def test_each_selected_symbol_fills_its_own_warmup_history(self, fetch_prices):

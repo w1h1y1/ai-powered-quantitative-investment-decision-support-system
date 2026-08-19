@@ -1572,6 +1572,134 @@ class SecurityResolveApiTests(APITestCase):
         self.assertFalse(Security.objects.filter(symbol='JPM').exists())
 
 
+class RemoteResolvedMarketDataIntegrationTests(APITestCase):
+    """Regression coverage: a remotely resolved security must immediately
+    serve its own OHLCV (K-line) data and must never fall back to another
+    security's symbol.
+    """
+
+    def setUp(self):
+        cache.clear()
+        User = get_user_model()
+        self.user = User.objects.create_user(username='remote_market_user', password='pass')
+        self.client.force_authenticate(user=self.user)
+
+    def remote_item(self, **overrides):
+        return {
+            'id': None,
+            'symbol': 'XOM',
+            'name': 'Exxon Mobil Corporation',
+            'exchange': 'NYSE',
+            'mic_code': 'XNYS',
+            'instrument_type': 'Common Stock',
+            'country': 'United States',
+            'currency': 'USD',
+            'is_local': False,
+            'source': 'remote',
+            'is_preferred': True,
+            **overrides,
+        }
+
+    def search_payload(self, item):
+        return {
+            'query': item['symbol'],
+            'items': [item],
+            'metadata': {
+                'query': item['symbol'],
+                'count': 1,
+                'local_count': 0,
+                'remote_error': '',
+                'cache_status': 'fresh',
+            },
+        }
+
+    @override_settings(MARKET_DATA_CACHE_TTL_SECONDS=3600)
+    def assert_remote_security_serves_its_own_ohlcv(self, **item_overrides):
+        today = get_latest_complete_market_date()
+        item = self.remote_item(**item_overrides)
+
+        with patch('market.services.search_security_symbols', return_value=self.search_payload(item)):
+            resolved = self.client.post(
+                reverse('security-resolve'),
+                {**item, 'search_query': item['symbol']},
+                format='json',
+            )
+
+        self.assertEqual(resolved.status_code, status.HTTP_201_CREATED)
+        security_id = resolved.data['security']['id']
+        security = Security.objects.get(pk=security_id)
+        self.assertEqual(security.symbol, item['symbol'])
+
+        # Seed a fresh daily cache for the resolved security so the OHLCV
+        # endpoint can be exercised end-to-end without calling the provider.
+        SecurityDailyPrice.objects.create(
+            security=security,
+            date=expected_warmup_start('6M', today, '1day'),
+            open=Decimal('100'),
+            high=Decimal('102'),
+            low=Decimal('99'),
+            close=Decimal('101'),
+            volume=1000,
+        )
+        SecurityDailyPrice.objects.create(
+            security=security,
+            date=expected_range_start('6M', today),
+            open=Decimal('100'),
+            high=Decimal('102'),
+            low=Decimal('99'),
+            close=Decimal('101'),
+            volume=1000,
+        )
+        SecurityDailyPrice.objects.create(
+            security=security,
+            date=today,
+            open=Decimal('101'),
+            high=Decimal('103'),
+            low=Decimal('100'),
+            close=Decimal('102'),
+            volume=1100,
+        )
+
+        response = self.client.get(
+            reverse('market-data-daily'),
+            {'security': security_id, 'range': '6M'},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['security']['id'], security_id)
+        self.assertEqual(response.data['security']['symbol'], item['symbol'])
+        self.assertEqual(response.data['metadata']['symbol'], item['symbol'])
+        self.assertEqual(response.data['metadata']['security_id'], security_id)
+        self.assertEqual(response.data['data_source'], 'database_cache')
+        self.assertEqual(response.data['cache_status'], 'hit')
+        self.assertEqual(response.data['values'][-1]['date'], today.isoformat())
+        self.assertEqual(response.data['values'][-1]['close'], '102.000000')
+        # No other security may appear in the response for this request.
+        self.assertNotEqual(item['symbol'], 'SPY')
+        self.assertEqual(
+            SecurityDailyPrice.objects.filter(security=security).count(),
+            3,
+        )
+
+    def test_remote_resolved_xom_serves_xom_ohlcv(self):
+        self.assert_remote_security_serves_its_own_ohlcv(
+            symbol='XOM',
+            name='Exxon Mobil Corporation',
+            exchange='NYSE',
+            mic_code='XNYS',
+            instrument_type='Common Stock',
+        )
+
+    def test_remote_resolved_qqq_serves_qqq_ohlcv(self):
+        self.assert_remote_security_serves_its_own_ohlcv(
+            symbol='QQQ',
+            name='Invesco QQQ ETF',
+            exchange='NASDAQ',
+            mic_code='XNAS',
+            instrument_type='ETF',
+        )
+
+
 class MarketDataApiTests(APITestCase):
     def setUp(self):
         User = get_user_model()
@@ -1831,6 +1959,33 @@ class MarketDataApiTests(APITestCase):
         self.assertEqual(response.data['values'][0]['volume'], 1000)
         self.assertEqual(response.data['warmup_values'][0]['date'], '2026-07-23')
         self.assertEqual(response.data['warmup_values'][0]['close'], '100.000000')
+
+    def test_market_data_api_returns_empty_ohlcv_contract(self):
+        self.authenticate()
+        result = MarketDataResult(
+            security=self.security,
+            range_key='1Y',
+            interval='1day',
+            source=SecurityDailyPrice.SOURCE_TWELVE_DATA,
+            is_stale=False,
+            values=[],
+        )
+
+        with patch('market.views.get_security_daily_market_data', return_value=result):
+            response = self.client.get(
+                reverse('market-data-daily'),
+                {'security': self.security.id, 'range': '1Y'},
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['security']['symbol'], 'AAPL')
+        self.assertEqual(response.data['values'], [])
+        self.assertEqual(response.data['warmup_values'], [])
+        self.assertEqual(response.data['metadata']['count'], 0)
+        self.assertEqual(response.data['metadata']['record_count'], 0)
+        self.assertEqual(response.data['metadata']['first_datetime'], '')
+        self.assertEqual(response.data['metadata']['last_datetime'], '')
+        self.assertEqual(response.data['metadata']['symbol'], 'AAPL')
 
     def test_market_data_api_passes_custom_dates_to_service(self):
         self.authenticate()
