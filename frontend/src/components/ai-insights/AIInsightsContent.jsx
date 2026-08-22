@@ -45,7 +45,7 @@ export function LoadingState() {
     <section className="ai-insights-card ai-insights-empty-card" aria-live="polite" aria-busy="true">
       <i className="ai-insights-spinner is-large" aria-hidden="true" />
       <h2>Generating AI analysis...</h2>
-      <p>Building deterministic evidence and requesting a structured final synthesis.</p>
+      <p>Building deterministic evidence and requesting an independent structured AI assessment.</p>
     </section>
   )
 }
@@ -83,6 +83,10 @@ function strategyDisplayName(analysis, strategyId) {
   return definition?.name || formatAnalysisEnumLabel(strategyId)
 }
 
+function independentAssessment(analysis) {
+  return analysis.llm_independent_assessment || null
+}
+
 export function DecisionSummaryCard({ analysis }) {
   const decision = analysis.decision_summary || {}
   return (
@@ -113,24 +117,31 @@ export function DecisionSummaryCard({ analysis }) {
 }
 
 export function FinalAIAssessmentCard({ analysis }) {
-  const assessment = analysis.final_market_assessment || {}
+  const independent = independentAssessment(analysis)
+  const assessment = independent?.llm_market_assessment || analysis.final_market_assessment || {}
   return (
-    <SectionCard eyebrow="Final judgment" title="Final AI Assessment">
+    <SectionCard eyebrow="Independent judgment" title="Independent AI Assessment">
       <div className="ai-insights-decision-grid">
         <Metric label="Market Regime" value={formatAnalysisEnumLabel(assessment.regime)} />
         <Metric label="Direction" value={formatAnalysisEnumLabel(assessment.direction)} />
         <Metric label="Confidence" value={formatRatioAsPercent(assessment.confidence)} />
       </div>
       <p className="ai-insights-card-copy">{assessment.summary || 'No final summary was provided.'}</p>
+      {analysis.backend_suggestion_exposed_to_llm === false ? (
+        <p className="ai-insights-card-copy">
+          The AI assessment was generated independently without receiving the backend’s suggested strategy.
+        </p>
+      ) : null}
     </SectionCard>
   )
 }
 
 export function FinalStrategyAssessmentCard({ analysis }) {
-  const assessment = analysis.final_strategy_assessment || {}
+  const independent = independentAssessment(analysis)
+  const assessment = independent?.llm_final_strategy_assessment || analysis.final_strategy_assessment || {}
   return (
-    <SectionCard eyebrow="Final strategy" title="Final Strategy Assessment">
-      <Metric label="Selected Strategy" value={strategyDisplayName(analysis, assessment.selected_strategy)} />
+    <SectionCard eyebrow="Independent selection" title="AI Strategy Assessment">
+      <Metric label="AI Selected Strategy" value={strategyDisplayName(analysis, assessment.selected_strategy)} />
       {assessment.confidence !== undefined ? (
         <Metric label="Confidence" value={formatRatioAsPercent(assessment.confidence)} />
       ) : null}
@@ -163,7 +174,8 @@ function ComparisonFactors({ factors, emptyText }) {
 }
 
 export function StrategyComparisonCard({ analysis }) {
-  const comparison = analysis.strategy_comparison || {}
+  const independent = independentAssessment(analysis)
+  const comparison = independent?.llm_strategy_comparison || analysis.strategy_comparison || {}
   const catalog = analysis.available_strategies?.length
     ? analysis.available_strategies
     : Object.keys(comparison).map((id) => ({ id, name: formatAnalysisEnumLabel(id) }))
@@ -173,7 +185,7 @@ export function StrategyComparisonCard({ analysis }) {
     <SectionCard eyebrow="Candidate evaluation" title="Strategy Comparison">
       <Metric
         label="Comparable Backtest Evidence"
-        value={analysis.backtest_evidence_available ? 'Available' : 'Unavailable'}
+        value={(independent?.backtest_evidence_available ?? analysis.backtest_evidence_available) ? 'Available' : 'Unavailable'}
       />
       <div className="ai-insights-strategy-comparison-grid">
         {catalog.map((definition) => {
@@ -203,9 +215,9 @@ export function StrategyComparisonCard({ analysis }) {
 }
 
 export function QuantitativeAssessmentCard({ analysis }) {
-  const assessment = analysis.quantitative_assessment || {}
+  const assessment = analysis.backend_quantitative_assessment || analysis.quantitative_assessment || {}
   return (
-    <SectionCard eyebrow="Deterministic engine" title="Quantitative Assessment">
+    <SectionCard eyebrow="Deterministic engine" title="Quantitative Engine Assessment">
       <div className="ai-insights-decision-grid">
         <Metric label="Preliminary Regime" value={formatAnalysisEnumLabel(assessment.preliminary_regime)} />
         <Metric label="Suggested Strategy" value={formatAnalysisEnumLabel(assessment.suggested_strategy)} />
@@ -229,7 +241,9 @@ export function QuantitativeAgreementCard({ analysis }) {
       <Metric label="Agreement" value={agreement.agrees_with_backend ? 'Agree' : 'Disagree'} />
       {agreement.differences?.length ? (
         <ul className="ai-insights-risk-list">
-          {agreement.differences.map((item) => <li key={item}>{item}</li>)}
+          {agreement.differences.map((item, index) => (
+            <li key={`${item?.field || item}-${index}`}>{item?.summary || item}</li>
+          ))}
         </ul>
       ) : (
         <p className="ai-insights-card-copy">No differences were reported.</p>
@@ -239,13 +253,14 @@ export function QuantitativeAgreementCard({ analysis }) {
 }
 
 export function RiskAssessmentCard({ analysis }) {
-  const risk = analysis.risk_assessment || {}
+  const independent = independentAssessment(analysis)
+  const risk = independent?.llm_risk_assessment || analysis.risk_assessment || {}
   return (
     <SectionCard eyebrow="Hard constraints applied" title="Risk Assessment">
       <div className="ai-insights-decision-grid">
         <Metric label="Risk Level" value={formatAnalysisEnumLabel(risk.risk_level)} />
-        <Metric label="Risk Off" value={risk.risk_off ? 'Yes' : 'No'} />
-        <Metric label="Allow New Long" value={risk.allow_new_long ? 'Yes' : 'No'} />
+        {risk.risk_off !== undefined ? <Metric label="Risk Off" value={risk.risk_off ? 'Yes' : 'No'} /> : null}
+        {risk.allow_new_long !== undefined ? <Metric label="Allow New Long" value={risk.allow_new_long ? 'Yes' : 'No'} /> : null}
       </div>
       <p className="ai-insights-card-copy">{risk.summary || 'No risk summary was provided.'}</p>
     </SectionCard>
@@ -253,7 +268,7 @@ export function RiskAssessmentCard({ analysis }) {
 }
 
 export function SupportingEvidenceCard({ analysis }) {
-  const evidence = analysis.supporting_evidence || []
+  const evidence = independentAssessment(analysis)?.supporting_evidence || analysis.supporting_evidence || []
   return (
     <SectionCard eyebrow="Validated context" title="Supporting Evidence">
       {evidence.length ? (
@@ -271,7 +286,7 @@ export function SupportingEvidenceCard({ analysis }) {
 }
 
 export function LimitationsCard({ analysis }) {
-  const limitations = analysis.limitations || []
+  const limitations = independentAssessment(analysis)?.limitations || analysis.limitations || []
   return (
     <SectionCard eyebrow="Uncertainty" title="Limitations">
       {limitations.length ? (
@@ -279,6 +294,26 @@ export function LimitationsCard({ analysis }) {
           {limitations.map((item) => <li key={item}>{item}</li>)}
         </ul>
       ) : <p className="ai-insights-card-copy">No additional limitations were reported.</p>}
+    </SectionCard>
+  )
+}
+
+export function ValidatedSystemDecisionCard({ analysis }) {
+  const decision = analysis.validated_system_decision || {}
+  const agreement = analysis.quantitative_agreement || {}
+  return (
+    <SectionCard eyebrow="Django validated" title="Validated System Decision">
+      <div className="ai-insights-decision-grid">
+        <Metric label="Final Validated Strategy" value={strategyDisplayName(analysis, decision.validated_final_strategy)} />
+        <Metric label="Backend / AI Agreement" value={agreement.agrees_with_backend === true ? 'Agree' : agreement.agrees_with_backend === false ? 'Disagree' : 'Unavailable'} />
+        <Metric label="Hard Constraint Override" value={decision.hard_constraint_override_applied ? 'Applied' : 'Not Applied'} />
+        <Metric label="Decision Source" value={formatAnalysisEnumLabel(decision.decision_source || analysis.decision_source)} />
+        <Metric label="Fallback" value={decision.fallback_used ? 'Yes' : 'No'} />
+      </div>
+      {decision.override_reason ? <p className="ai-insights-card-copy">{decision.override_reason}</p> : null}
+      {decision.llm_selected_strategy ? (
+        <Metric label="Original AI Selection" value={strategyDisplayName(analysis, decision.llm_selected_strategy)} />
+      ) : null}
     </SectionCard>
   )
 }
@@ -672,7 +707,28 @@ export default function AIInsightsContent() {
           <>
             {analysisUnavailable ? <UnavailableState reason={analysisUnavailable} /> : null}
             {error ? <ErrorState message={error} /> : null}
-            {analysis.final_market_assessment ? (
+            {analysis.backend_quantitative_assessment ? (
+              <>
+                <QuantitativeAssessmentCard analysis={analysis} />
+                {analysis.llm_independent_assessment ? (
+                  <>
+                    <FinalAIAssessmentCard analysis={analysis} />
+                    <FinalStrategyAssessmentCard analysis={analysis} />
+                    <StrategyComparisonCard analysis={analysis} />
+                    <div className="ai-insights-analysis-grid">
+                      <RiskAssessmentCard analysis={analysis} />
+                      <SupportingEvidenceCard analysis={analysis} />
+                      <LimitationsCard analysis={analysis} />
+                    </div>
+                  </>
+                ) : null}
+                <ValidatedSystemDecisionCard analysis={analysis} />
+                <div className="ai-insights-analysis-grid">
+                  <QuantitativeAgreementCard analysis={analysis} />
+                  <AnalysisSourceCard analysis={analysis} metadata={analysis.metadata} />
+                </div>
+              </>
+            ) : analysis.final_market_assessment ? (
               <>
                 <FinalAIAssessmentCard analysis={analysis} />
                 <FinalStrategyAssessmentCard analysis={analysis} />

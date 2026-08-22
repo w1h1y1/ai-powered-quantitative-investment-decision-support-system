@@ -67,9 +67,10 @@ def valid_analysis(regime='high_volatility', strategy='risk_off'):
         },
         'backtest_evidence_available': False,
         'supporting_evidence': [{
-            'factor': 'Suggested Strategy',
-            'value': strategy,
-            'interpretation': 'The deterministic suggestion is one supplied comparison input.',
+            'factor': 'Market Data Available',
+            'source_path': 'market_data.available',
+            'value': True,
+            'interpretation': 'Current market data is available for independent assessment.',
         }],
         'limitations': ['Strategy-specific comparison backtests are unavailable.'],
     }
@@ -293,7 +294,7 @@ class AgentPipelineIntegrationTests(TestCase):
         self.assertIn('Financials', jpm_provider.last_prompt['user'])
 
     def test_llm_judgment_cannot_override_django_risk_constraints(self):
-        conflicting_analysis = valid_analysis('sideways_range', 'mean_reversion')
+        conflicting_analysis = valid_analysis('sideways_range', 'trend_following')
         conflicting_analysis['quantitative_agreement'] = {
             'agrees_with_backend': False,
             'differences': ['Final regime and strategy differ from the preliminary assessment.'],
@@ -315,11 +316,16 @@ class AgentPipelineIntegrationTests(TestCase):
                 provider=provider,
             )
 
-        self.assertEqual(response['analysis_status'], 'fallback')
+        self.assertEqual(response['analysis_status'], 'success')
+        self.assertEqual(response['decision_source'], 'llm_synthesis_with_constraint_override')
         self.assertEqual(response['symbol'], 'AAPL')
         self.assertEqual(
-            response['analysis']['final_strategy_assessment']['selected_strategy'],
+            response['analysis']['validated_system_decision']['validated_final_strategy'],
             'risk_off',
+        )
+        self.assertEqual(
+            response['analysis']['validated_system_decision']['llm_selected_strategy'],
+            'trend_following',
         )
         self.assertFalse(response['analysis']['risk_assessment']['allow_new_long'])
         self.assertTrue(response['analysis']['risk_assessment']['risk_off'])

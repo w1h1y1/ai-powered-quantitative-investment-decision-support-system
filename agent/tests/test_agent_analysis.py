@@ -264,7 +264,9 @@ class AgentAnalysisServiceTests(SimpleTestCase):
         self.assertEqual(response['decision_source'], 'llm_synthesis')
         self.assertTrue(response['analysis']['quantitative_agreement']['agrees_with_backend'])
         self.assertEqual(response['analysis']['final_strategy_assessment']['selected_strategy'], 'risk_off')
-        self.assertEqual(response['metadata']['analysis_version'], 'investment_agent_analysis_v3')
+        self.assertEqual(response['metadata']['analysis_version'], 'investment_agent_analysis_v4')
+        self.assertEqual(response['llm_assessment_mode'], 'independent')
+        self.assertFalse(response['backend_suggestion_exposed_to_llm'])
         build.assert_called_once()
 
     def test_prompt_requires_independent_comparison_and_hard_constraints(self):
@@ -273,12 +275,14 @@ class AgentAnalysisServiceTests(SimpleTestCase):
 
         system = provider.last_prompt['system']
         user = provider.last_prompt['user']
-        self.assertIn('opinions to test, never as final answers', system)
-        self.assertIn('Evaluate every candidate', system)
-        self.assertIn('None of these associations is absolute', system)
-        self.assertIn('allow_new_long=false or risk_off=true prohibits active long strategies', system)
+        self.assertIn('independent AI assessment stage', system)
+        self.assertIn('Evaluate every available strategy exactly once', system)
+        self.assertIn('sideways/range label alone is never sufficient', system)
+        self.assertIn('Django will independently enforce them', system)
         self.assertIn('evidence_catalog', system)
         self.assertIn('"factor": "ADX"', user)
+        self.assertNotIn('suggested_strategy', user)
+        self.assertNotIn('preliminary_regime', user)
 
     def test_llm_may_disagree_using_supplied_evidence(self):
         response, _ = self.run_with_context(
@@ -292,24 +296,29 @@ class AgentAnalysisServiceTests(SimpleTestCase):
         self.assertEqual(analysis['final_strategy_assessment']['selected_strategy'], 'mean_reversion')
         self.assertEqual(analysis['supporting_evidence'][0]['factor'], 'ADX')
 
-    def test_disagreement_without_differences_falls_back(self):
+    def test_django_computes_differences_without_llm_agreement_input(self):
         data = disagreeing_analysis()
         data['quantitative_agreement']['differences'] = []
         response, _ = self.run_with_context(
             FakeProvider(analysis=data), context_fixture(active=True),
         )
 
-        self.assertEqual(response['analysis_status'], 'fallback')
-        self.assertEqual(response['decision_source'], 'quantitative_fallback')
-        self.assertEqual(response['fallback_reason'], 'llm_schema_validation_failed')
+        self.assertEqual(response['analysis_status'], 'success')
+        self.assertFalse(response['analysis']['quantitative_agreement']['strategy_agreement'])
+        self.assertTrue(response['analysis']['quantitative_agreement']['differences'])
 
-    def test_backend_allow_new_long_false_forces_defensive_fallback(self):
+    def test_backend_allow_new_long_false_overrides_without_fallback(self):
         response, _ = self.run_with_context(FakeProvider(analysis=disagreeing_analysis()))
 
-        self.assertEqual(response['analysis_status'], 'fallback')
+        self.assertEqual(response['analysis_status'], 'success')
+        self.assertEqual(response['decision_source'], 'llm_synthesis_with_constraint_override')
         self.assertEqual(
-            response['analysis']['final_strategy_assessment']['selected_strategy'],
+            response['analysis']['validated_system_decision']['validated_final_strategy'],
             'risk_off',
+        )
+        self.assertEqual(
+            response['analysis']['validated_system_decision']['llm_selected_strategy'],
+            'mean_reversion',
         )
         risk = response['analysis']['risk_assessment']
         self.assertFalse(risk['allow_new_long'])
@@ -360,13 +369,12 @@ class AgentAnalysisServiceTests(SimpleTestCase):
         self.assertEqual(response['analysis_status'], 'fallback')
         self.assertEqual(response['fallback_reason'], 'llm_evidence_validation_failed')
 
-    def test_narrative_number_absent_from_context_falls_back(self):
+    def test_narrative_parameters_do_not_trigger_numeric_scanning(self):
         data = valid_analysis()
         data['final_market_assessment']['summary'] = 'ADX is 99.9, indicating a strong trend.'
         response, _ = self.run_with_context(FakeProvider(analysis=data))
 
-        self.assertEqual(response['analysis_status'], 'fallback')
-        self.assertEqual(response['fallback_reason'], 'llm_evidence_validation_failed')
+        self.assertEqual(response['analysis_status'], 'success')
 
     def test_extra_schema_field_falls_back(self):
         data = valid_analysis()
@@ -484,11 +492,15 @@ class AgentAnalysisServiceTests(SimpleTestCase):
         response, _ = self.run_with_context(FakeProvider(analysis=data), context)
         self.assertEqual(response['fallback_reason'], 'llm_evidence_validation_failed')
 
-    def test_disallowed_candidate_must_be_marked_not_allowed(self):
+    def test_non_selected_candidate_label_does_not_bypass_final_merge(self):
         data = valid_analysis()
         data['strategy_comparison']['trend_following']['suitability'] = 'high'
         response, _ = self.run_with_context(FakeProvider(analysis=data))
-        self.assertEqual(response['fallback_reason'], 'llm_strategy_not_allowed')
+        self.assertEqual(response['analysis_status'], 'success')
+        self.assertEqual(
+            response['analysis']['validated_system_decision']['validated_final_strategy'],
+            'risk_off',
+        )
 
 
 class AgentAnalysisApiTests(APITestCase):

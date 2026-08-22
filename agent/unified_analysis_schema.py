@@ -1,4 +1,4 @@
-"""Validated quantitative-comparison + LLM-synthesis schema."""
+"""Validation and deterministic merge for independent Investment Agent judgments."""
 
 import json
 import math
@@ -20,14 +20,11 @@ from market.strategy_catalog import (
 )
 
 
-AGENT_ANALYSIS_VERSION = 'investment_agent_analysis_v3'
-AGENT_ANALYSIS_PROMPT_VERSION = 'investment_agent_analysis_prompt_v3'
+AGENT_ANALYSIS_VERSION = 'investment_agent_analysis_v4'
+AGENT_ANALYSIS_PROMPT_VERSION = 'investment_agent_analysis_prompt_v4'
 
 ALLOWED_REGIMES = {
-    REGIME_BEARISH,
-    REGIME_BULLISH,
-    REGIME_HIGH_VOLATILITY,
-    REGIME_SIDEWAYS,
+    REGIME_BEARISH, REGIME_BULLISH, REGIME_HIGH_VOLATILITY, REGIME_SIDEWAYS,
 }
 ALLOWED_DIRECTIONS = {'bullish', 'bearish', 'neutral', 'mixed'}
 ALLOWED_CANDIDATE_SUITABILITY = {
@@ -35,14 +32,11 @@ ALLOWED_CANDIDATE_SUITABILITY = {
 }
 ALLOWED_RISK_LEVELS = {'low', 'medium', 'high'}
 ACTIVE_STRATEGIES = {STRATEGY_TREND_FOLLOWING, STRATEGY_MEAN_REVERSION}
-TOP_LEVEL_FIELDS = {
-    'final_market_assessment', 'strategy_comparison',
-    'final_strategy_assessment', 'quantitative_agreement',
-    'risk_assessment', 'backtest_evidence_available',
-    'supporting_evidence', 'limitations',
+LLM_TOP_LEVEL_FIELDS = {
+    'llm_market_assessment', 'llm_strategy_comparison',
+    'llm_final_strategy_assessment', 'llm_risk_assessment',
+    'backtest_evidence_available', 'supporting_evidence', 'limitations',
 }
-NUMBER_PATTERN = re.compile(r'(?<![A-Za-z0-9_])[-+]?\d+(?:\.\d+)?(?![A-Za-z0-9_])')
-
 FORBIDDEN_ACTION_PHRASES = (
     'initiate a position', 'enter a position', 'add exposure',
     'increase exposure', 'reduce exposure', 'exit the position',
@@ -50,7 +44,6 @@ FORBIDDEN_ACTION_PHRASES = (
     'could enter', 'capacity to enter', 'room to add',
     'opportunity to buy', 'ample capacity',
 )
-
 ENUM_ALIASES = {
     'regime': {
         'bullish trend': REGIME_BULLISH,
@@ -77,22 +70,14 @@ ENUM_ALIASES = {
 
 
 class UnifiedAnalysisValidationError(ValueError):
-    """Raised when provider output is unsafe or does not match v3."""
+    """A bounded, user-safe LLM response validation failure."""
 
     def __init__(
-        self,
-        message,
-        *,
-        reason_code='llm_schema_validation_failed',
-        stage='schema',
-        error_code='schema_mismatch',
-        path=None,
-        expected=None,
-        actual=None,
-        missing_fields=None,
-        extra_fields=None,
-        illegal_strategy_id=None,
-        hard_constraint_triggered=False,
+        self, message, *, reason_code='llm_schema_validation_failed',
+        stage='schema', error_code='schema_mismatch', path=None,
+        expected=None, actual=None, missing_fields=None, extra_fields=None,
+        illegal_strategy_id=None, hard_constraint_triggered=False,
+        source_path=None,
     ):
         super().__init__(message)
         self.reason_code = reason_code
@@ -106,19 +91,23 @@ class UnifiedAnalysisValidationError(ValueError):
         self.extra_fields = sorted(extra_fields or [])
         self.illegal_strategy_id = illegal_strategy_id
         self.hard_constraint_triggered = hard_constraint_triggered
+        self.source_path = source_path
 
     def safe_details(self):
-        """Return bounded diagnostics safe for logs and repair prompts."""
-
         actual = self.actual
+        source_path = self.source_path
         if self.error_code == 'invalid_type' and isinstance(actual, str):
             actual = None
         if isinstance(actual, str):
             actual = actual[:120]
+        if isinstance(source_path, str):
+            source_path = source_path[:160]
         return {
             'validation_stage': self.stage,
             'validation_error_code': self.error_code,
             'validation_error_path': self.path,
+            'validation_error_value': actual,
+            'validation_source_path': source_path,
             'expected': self.expected,
             'actual_type': self.actual_type,
             'actual': actual,
@@ -137,20 +126,18 @@ def _alias_key(value):
 
 def _normalize_enum_format(value, enum_name):
     key = _alias_key(value)
-    if key is None:
-        return value
-    return ENUM_ALIASES[enum_name].get(key, value)
+    return ENUM_ALIASES[enum_name].get(key, value) if key is not None else value
 
 
 def _normalize_confidence_format(value):
     if isinstance(value, bool):
         return value
     number = value
-    is_percent = False
+    percent = False
     if isinstance(value, str):
         stripped = value.strip()
-        is_percent = stripped.endswith('%')
-        if is_percent:
+        percent = stripped.endswith('%')
+        if percent:
             stripped = stripped[:-1].strip()
         try:
             number = float(stripped)
@@ -159,148 +146,142 @@ def _normalize_confidence_format(value):
     if not isinstance(number, (int, float)) or not math.isfinite(float(number)):
         return value
     number = float(number)
-    if is_percent or 1 < number <= 100:
-        number /= 100
-    return number
+    return number / 100 if percent or 1 < number <= 100 else number
 
 
 def standardize_unified_analysis_input(data):
-    """Apply only finite, semantics-preserving model-output normalizations."""
+    """Normalize harmless real-provider formatting variants before v4 validation."""
 
     if not isinstance(data, dict):
         return data, []
-    standardized = deepcopy(data)
+    value = deepcopy(data)
     changes = []
+    legacy_names = {
+        'final_market_assessment': 'llm_market_assessment',
+        'strategy_comparison': 'llm_strategy_comparison',
+        'final_strategy_assessment': 'llm_final_strategy_assessment',
+        'risk_assessment': 'llm_risk_assessment',
+    }
+    for old, new in legacy_names.items():
+        if old in value and new not in value:
+            value[new] = value.pop(old)
+            changes.append(old)
+    if 'quantitative_agreement' in value:
+        value.pop('quantitative_agreement')
+        changes.append('quantitative_agreement')
+    risk = value.get('llm_risk_assessment')
+    if isinstance(risk, dict):
+        for obsolete in ('risk_off', 'allow_new_long'):
+            if obsolete in risk:
+                risk.pop(obsolete)
+                changes.append(f'llm_risk_assessment.{obsolete}')
 
     def replace(container, key, normalized, path):
         if isinstance(container, dict) and key in container and container[key] != normalized:
             container[key] = normalized
             changes.append(path)
 
-    market = standardized.get('final_market_assessment')
+    market = value.get('llm_market_assessment')
     if isinstance(market, dict):
-        replace(market, 'regime', _normalize_enum_format(market.get('regime'), 'regime'), 'final_market_assessment.regime')
-        replace(market, 'direction', _normalize_enum_format(market.get('direction'), 'direction'), 'final_market_assessment.direction')
-        replace(market, 'confidence', _normalize_confidence_format(market.get('confidence')), 'final_market_assessment.confidence')
-
-    comparison = standardized.get('strategy_comparison')
+        replace(market, 'regime', _normalize_enum_format(market.get('regime'), 'regime'), 'llm_market_assessment.regime')
+        replace(market, 'direction', _normalize_enum_format(market.get('direction'), 'direction'), 'llm_market_assessment.direction')
+        replace(market, 'confidence', _normalize_confidence_format(market.get('confidence')), 'llm_market_assessment.confidence')
+    comparison = value.get('llm_strategy_comparison')
     if isinstance(comparison, dict):
         normalized_comparison = {}
-        collision = False
         for strategy_id, candidate in comparison.items():
             normalized_id = _normalize_enum_format(strategy_id, 'strategy')
             if normalized_id in normalized_comparison:
-                collision = True
+                normalized_comparison = comparison
                 break
             normalized_comparison[normalized_id] = candidate
             if normalized_id != strategy_id:
-                changes.append(f'strategy_comparison.{strategy_id}')
-        if not collision:
-            standardized['strategy_comparison'] = normalized_comparison
-            comparison = normalized_comparison
-        for strategy_id, candidate in comparison.items():
+                changes.append(f'llm_strategy_comparison.{strategy_id}')
+        value['llm_strategy_comparison'] = normalized_comparison
+        for strategy_id, candidate in normalized_comparison.items():
             if isinstance(candidate, dict):
-                replace(
-                    candidate, 'suitability',
-                    _normalize_enum_format(candidate.get('suitability'), 'suitability'),
-                    f'strategy_comparison.{strategy_id}.suitability',
-                )
-
-    strategy = standardized.get('final_strategy_assessment')
+                replace(candidate, 'suitability', _normalize_enum_format(candidate.get('suitability'), 'suitability'), f'llm_strategy_comparison.{strategy_id}.suitability')
+    strategy = value.get('llm_final_strategy_assessment')
     if isinstance(strategy, dict):
-        replace(strategy, 'selected_strategy', _normalize_enum_format(strategy.get('selected_strategy'), 'strategy'), 'final_strategy_assessment.selected_strategy')
-        replace(strategy, 'suitability', _normalize_enum_format(strategy.get('suitability'), 'suitability'), 'final_strategy_assessment.suitability')
-        replace(strategy, 'confidence', _normalize_confidence_format(strategy.get('confidence')), 'final_strategy_assessment.confidence')
-
-    risk = standardized.get('risk_assessment')
+        replace(strategy, 'selected_strategy', _normalize_enum_format(strategy.get('selected_strategy'), 'strategy'), 'llm_final_strategy_assessment.selected_strategy')
+        replace(strategy, 'suitability', _normalize_enum_format(strategy.get('suitability'), 'suitability'), 'llm_final_strategy_assessment.suitability')
+        replace(strategy, 'confidence', _normalize_confidence_format(strategy.get('confidence')), 'llm_final_strategy_assessment.confidence')
     if isinstance(risk, dict):
-        replace(risk, 'risk_level', _normalize_enum_format(risk.get('risk_level'), 'risk_level'), 'risk_assessment.risk_level')
+        replace(risk, 'risk_level', _normalize_enum_format(risk.get('risk_level'), 'risk_level'), 'llm_risk_assessment.risk_level')
+    return value, changes
 
-    return standardized, changes
 
-
-def _string(value, field_name):
+def _string(value, path):
     if isinstance(value, str) and value.strip():
         return value.strip()
     raise UnifiedAnalysisValidationError(
-        f'{field_name} must be a non-empty string',
-        error_code='invalid_type', path=field_name,
-        expected='non-empty string', actual=value,
+        f'{path} must be a non-empty string', error_code='invalid_type',
+        path=path, expected='non-empty string', actual=value,
     )
 
 
-def _string_list(value, field_name):
+def _string_list(value, path):
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise UnifiedAnalysisValidationError(
-            f'{field_name} must be an array of strings',
-            error_code='invalid_type', path=field_name,
-            expected='array of strings', actual=value,
+            f'{path} must be an array of strings', error_code='invalid_type',
+            path=path, expected='array of strings', actual=value,
         )
     return [item.strip() for item in value if item.strip()]
 
 
-def _section(data, field_name):
-    value = data.get(field_name)
-    if not isinstance(value, dict):
-        raise UnifiedAnalysisValidationError(
-            f'missing required field: {field_name}',
-            error_code='missing_field', path=field_name,
-            expected='object', actual=value, missing_fields=[field_name],
-        )
-    return value
-
-
-def _require_exact_fields(value, expected, field_name):
-    actual_fields = set(value)
-    expected_fields = set(expected)
-    if actual_fields != expected_fields:
-        raise UnifiedAnalysisValidationError(
-            f'{field_name} has missing or extra fields',
-            error_code='field_set_mismatch', path=field_name,
-            expected='exact required field set',
-            missing_fields=expected_fields - actual_fields,
-            extra_fields=actual_fields - expected_fields,
-        )
-
-
-def _enum(value, allowed, field_name):
-    if value not in allowed:
-        raise UnifiedAnalysisValidationError(
-            f'{field_name} has an unsupported value',
-            error_code='invalid_enum', path=field_name,
-            expected='|'.join(sorted(allowed)), actual=value,
-            illegal_strategy_id=(
-                value if field_name.endswith('selected_strategy') else None
-            ),
-        )
-    return value
-
-
-def _boolean(value, field_name):
+def _boolean(value, path):
     if not isinstance(value, bool):
         raise UnifiedAnalysisValidationError(
-            f'{field_name} must be a boolean',
-            error_code='invalid_type', path=field_name,
+            f'{path} must be boolean', error_code='invalid_type', path=path,
             expected='boolean', actual=value,
         )
     return value
 
 
-def _confidence(value, field_name):
+def _confidence(value, path):
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise UnifiedAnalysisValidationError(
-            f'{field_name} must be numeric',
-            error_code='invalid_type', path=field_name,
+            f'{path} must be numeric', error_code='invalid_type', path=path,
             expected='JSON number from 0 to 1', actual=value,
         )
     number = float(value)
-    if not math.isfinite(number) or number < 0 or number > 1:
+    if not math.isfinite(number) or not 0 <= number <= 1:
         raise UnifiedAnalysisValidationError(
-            f'{field_name} must be between 0 and 1',
-            error_code='out_of_range', path=field_name,
+            f'{path} is outside range', error_code='out_of_range', path=path,
             expected='JSON number from 0 to 1', actual=value,
         )
     return round(number, 6)
+
+
+def _enum(value, allowed, path):
+    if value not in allowed:
+        raise UnifiedAnalysisValidationError(
+            f'{path} has an unsupported value', error_code='invalid_enum',
+            path=path, expected='|'.join(sorted(allowed)), actual=value,
+            illegal_strategy_id=value if path.endswith('selected_strategy') else None,
+        )
+    return value
+
+
+def _section(data, name):
+    value = data.get(name)
+    if not isinstance(value, dict):
+        raise UnifiedAnalysisValidationError(
+            f'{name} is required', error_code='missing_field', path=name,
+            expected='object', actual=value, missing_fields=[name],
+        )
+    return value
+
+
+def _require_exact_fields(value, expected, path):
+    actual = set(value)
+    expected = set(expected)
+    if actual != expected:
+        raise UnifiedAnalysisValidationError(
+            f'{path} has missing or extra fields', error_code='field_set_mismatch',
+            path=path, expected='exact required field set',
+            missing_fields=expected - actual, extra_fields=actual - expected,
+        )
 
 
 def _has_forbidden_text(value):
@@ -323,68 +304,87 @@ def has_open_close_direction_contradiction(analysis, context):
     if direction not in {'Up', 'Down', 'Flat'}:
         return False
     text = json.dumps(analysis).lower()
-    if direction == 'Down':
-        forbidden = ('closed higher', 'up from the open', 'rose from the open', 'closed above the open')
-    elif direction == 'Up':
-        forbidden = ('closed lower', 'down from the open', 'fell from the open', 'closed below the open')
-    else:
-        forbidden = ('closed higher', 'closed lower', 'up from the open', 'down from the open')
-    return any(phrase in text for phrase in forbidden)
+    phrases = {
+        'Down': ('closed higher', 'up from the open', 'rose from the open', 'closed above the open'),
+        'Up': ('closed lower', 'down from the open', 'fell from the open', 'closed below the open'),
+        'Flat': ('closed higher', 'closed lower', 'up from the open', 'down from the open'),
+    }
+    return any(phrase in text for phrase in phrases[direction])
 
 
 def _same_value(actual, expected):
     if isinstance(expected, bool) or isinstance(actual, bool):
         return type(actual) is type(expected) and actual == expected
     if isinstance(expected, (int, float)) and isinstance(actual, (int, float)):
-        return math.isclose(float(actual), float(expected), rel_tol=1e-9, abs_tol=1e-9)
+        return math.isclose(float(actual), float(expected), rel_tol=1e-6, abs_tol=1e-6)
     return actual == expected
 
 
-def _normalize_evidence(value, context, *, field_name, allow_empty):
+def _normalize_evidence(value, context, *, path, allow_empty):
     if not isinstance(value, list) or (not allow_empty and not value):
-        qualifier = 'an array' if allow_empty else 'a non-empty array'
+        expected = 'array' if allow_empty else 'non-empty array'
         raise UnifiedAnalysisValidationError(
-            f'{field_name} must be {qualifier}',
-            error_code='invalid_type', path=field_name,
-            expected=qualifier, actual=value,
+            f'{path} must be {expected}', error_code='invalid_type', path=path,
+            expected=expected, actual=value,
         )
     catalog = {
-        item.get('factor'): item.get('value')
+        item.get('source_path'): item
         for item in (context.get('evidence_catalog') or [])
-        if isinstance(item, dict) and isinstance(item.get('factor'), str)
+        if isinstance(item, dict) and isinstance(item.get('source_path'), str)
     }
     normalized = []
     for index, item in enumerate(value):
-        item_name = f'{field_name}[{index}]'
+        item_path = f'{path}[{index}]'
         if not isinstance(item, dict):
             raise UnifiedAnalysisValidationError(
-                f'{item_name} must be an object',
-                error_code='invalid_type', path=item_name,
-                expected='object', actual=item,
+                f'{item_path} must be an object', error_code='invalid_type',
+                path=item_path, expected='object', actual=item,
             )
-        _require_exact_fields(item, {'factor', 'value', 'interpretation'}, item_name)
-        factor = _string(item.get('factor'), f'{item_name}.factor')
-        if factor not in catalog:
+        actual_fields = set(item)
+        accepted_fields = (
+            {'factor', 'source_path', 'value', 'interpretation'},
+            {'factor', 'value', 'interpretation'},
+        )
+        if actual_fields not in accepted_fields:
+            _require_exact_fields(item, accepted_fields[0], item_path)
+        factor = _string(item.get('factor'), f'{item_path}.factor')
+        source_path = item.get('source_path')
+        if source_path is None:
+            matches = [
+                candidate_path for candidate_path, candidate in catalog.items()
+                if candidate.get('factor') == factor
+            ]
+            if len(matches) == 1:
+                source_path = matches[0]
+        source_path = _string(source_path, f'{item_path}.source_path')
+        source = catalog.get(source_path)
+        if source is None:
             raise UnifiedAnalysisValidationError(
-                f'{item_name} references an unavailable factor',
-                reason_code='llm_evidence_validation_failed',
-                stage='business_rule', error_code='unknown_evidence_factor',
-                path=f'{item_name}.factor', expected='exact evidence_catalog factor',
-                actual=factor,
+                f'{item_path} references an unknown source path',
+                reason_code='llm_evidence_validation_failed', stage='evidence',
+                error_code='unknown_evidence_source_path', path=f'{item_path}.source_path',
+                expected='source_path present in evidence_catalog', actual=source_path,
+                source_path=source_path,
+            )
+        if factor != source.get('factor'):
+            raise UnifiedAnalysisValidationError(
+                f'{item_path} factor does not match source path',
+                reason_code='llm_evidence_validation_failed', stage='evidence',
+                error_code='evidence_factor_mismatch', path=f'{item_path}.factor',
+                expected=source.get('factor'), actual=factor, source_path=source_path,
             )
         evidence_value = item.get('value')
-        if not _same_value(evidence_value, catalog[factor]):
+        if not _same_value(evidence_value, source.get('value')):
             raise UnifiedAnalysisValidationError(
-                f'{item_name} value does not match context',
-                reason_code='llm_evidence_validation_failed',
-                stage='business_rule', error_code='evidence_value_mismatch',
-                path=f'{item_name}.value', expected=repr(catalog[factor]),
-                actual=evidence_value,
+                f'{item_path} value does not match its context field',
+                reason_code='llm_evidence_validation_failed', stage='evidence',
+                error_code='unverified_numeric_value' if isinstance(evidence_value, (int, float)) else 'evidence_value_mismatch',
+                path=f'{item_path}.value', expected=repr(source.get('value')),
+                actual=evidence_value, source_path=source_path,
             )
         normalized.append({
-            'factor': factor,
-            'value': evidence_value,
-            'interpretation': _string(item.get('interpretation'), f'{item_name}.interpretation'),
+            'factor': factor, 'source_path': source_path, 'value': source.get('value'),
+            'interpretation': _string(item.get('interpretation'), f'{item_path}.interpretation'),
         })
     return normalized
 
@@ -402,473 +402,340 @@ def _currently_allowed_ids(context, candidate_ids):
     configured = constraints.get('currently_allowed_strategies')
     if isinstance(configured, list):
         return {item for item in configured if item in candidate_ids}
-    if constraints.get('allow_new_long') is True:
-        return set(candidate_ids)
-    return {STRATEGY_RISK_OFF, STRATEGY_NO_STRATEGY} & set(candidate_ids)
+    return set(candidate_ids) if constraints.get('allow_new_long') is True else {
+        STRATEGY_RISK_OFF, STRATEGY_NO_STRATEGY,
+    } & set(candidate_ids)
 
 
-def _normalize_strategy_comparison(value, context, candidate_ids):
+def _normalize_comparison(value, context, candidate_ids):
     if not isinstance(value, dict) or set(value) != set(candidate_ids):
-        actual_ids = set(value) if isinstance(value, dict) else set()
+        actual = set(value) if isinstance(value, dict) else set()
         raise UnifiedAnalysisValidationError(
-            'strategy_comparison must contain every available strategy exactly once',
-            error_code='field_set_mismatch', path='strategy_comparison',
-            expected='|'.join(candidate_ids), actual=value,
-            missing_fields=set(candidate_ids) - actual_ids,
-            extra_fields=actual_ids - set(candidate_ids),
+            'llm_strategy_comparison must contain every candidate exactly once',
+            error_code='field_set_mismatch', path='llm_strategy_comparison',
+            expected='|'.join(candidate_ids), missing_fields=set(candidate_ids) - actual,
+            extra_fields=actual - set(candidate_ids),
         )
     normalized = {}
-    currently_allowed = _currently_allowed_ids(context, candidate_ids)
     for strategy_id in candidate_ids:
+        path = f'llm_strategy_comparison.{strategy_id}'
         item = value.get(strategy_id)
-        field_name = f'strategy_comparison.{strategy_id}'
         if not isinstance(item, dict):
             raise UnifiedAnalysisValidationError(
-                f'{field_name} must be an object',
-                error_code='invalid_type', path=field_name,
+                f'{path} must be object', error_code='invalid_type', path=path,
                 expected='object', actual=item,
             )
-        _require_exact_fields(
-            item,
-            {'suitability', 'supporting_factors', 'conflicting_factors'},
-            field_name,
-        )
-        supporting = _normalize_evidence(
-            item.get('supporting_factors'), context,
-            field_name=f'{field_name}.supporting_factors', allow_empty=True,
-        )
-        conflicting = _normalize_evidence(
-            item.get('conflicting_factors'), context,
-            field_name=f'{field_name}.conflicting_factors', allow_empty=True,
-        )
-        if any(
-            evidence['factor'].startswith('Hybrid Backtest')
-            for evidence in supporting + conflicting
-        ):
-            raise UnifiedAnalysisValidationError(
-                'the related hybrid backtest is not candidate-comparison evidence',
-                reason_code='llm_evidence_validation_failed',
-                stage='business_rule', error_code='non_comparable_backtest_evidence',
-                path=field_name,
-            )
-        suitability = _enum(
-                item.get('suitability'), ALLOWED_CANDIDATE_SUITABILITY,
-                f'{field_name}.suitability',
-            )
-        if strategy_id not in currently_allowed and suitability != 'not_allowed':
-            raise UnifiedAnalysisValidationError(
-                f'{field_name}.suitability must be not_allowed under current constraints',
-                reason_code='llm_strategy_not_allowed',
-                stage='business_rule', error_code='hard_constraint_violation',
-                path=f'{field_name}.suitability', expected='not_allowed',
-                actual=suitability, hard_constraint_triggered=True,
-            )
-        if strategy_id in currently_allowed and suitability == 'not_allowed':
-            raise UnifiedAnalysisValidationError(
-                f'{field_name}.suitability contradicts current permissions',
-                stage='business_rule', error_code='permission_contradiction',
-                path=f'{field_name}.suitability',
-                expected='high|medium|low|insufficient_evidence',
-                actual=suitability,
-            )
+        _require_exact_fields(item, {'suitability', 'supporting_factors', 'conflicting_factors'}, path)
+        suitability = _enum(item.get('suitability'), ALLOWED_CANDIDATE_SUITABILITY, f'{path}.suitability')
         normalized[strategy_id] = {
             'suitability': suitability,
-            'supporting_factors': supporting,
-            'conflicting_factors': conflicting,
+            'supporting_factors': _normalize_evidence(item.get('supporting_factors'), context, path=f'{path}.supporting_factors', allow_empty=True),
+            'conflicting_factors': _normalize_evidence(item.get('conflicting_factors'), context, path=f'{path}.conflicting_factors', allow_empty=True),
         }
+        if any(
+            evidence['factor'].startswith('Hybrid Backtest')
+            for evidence in normalized[strategy_id]['supporting_factors'] + normalized[strategy_id]['conflicting_factors']
+        ):
+            raise UnifiedAnalysisValidationError(
+                'related hybrid backtest is not comparable candidate evidence',
+                reason_code='llm_evidence_validation_failed', stage='evidence',
+                error_code='non_comparable_backtest_evidence', path=path,
+            )
     return normalized
 
 
-def _context_numbers(value):
-    numbers = []
-    if isinstance(value, bool):
-        return numbers
-    if isinstance(value, (int, float)) and math.isfinite(float(value)):
-        numbers.append(float(value))
-    elif isinstance(value, dict):
-        for item in value.values():
-            numbers.extend(_context_numbers(item))
-    elif isinstance(value, list):
-        for item in value:
-            numbers.extend(_context_numbers(item))
-    return numbers
-
-
-def _validate_narrative_numbers(strings, context, extra_allowed):
-    allowed = _context_numbers(context) + [float(item) for item in extra_allowed]
-    for narrative in strings:
-        if not isinstance(narrative, str):
-            continue
-        for match in NUMBER_PATTERN.findall(narrative):
-            number = float(match)
-            if not any(math.isclose(number, item, rel_tol=1e-9, abs_tol=1e-9) for item in allowed):
-                raise UnifiedAnalysisValidationError(
-                    'narrative contains a numeric value absent from context',
-                    reason_code='llm_evidence_validation_failed',
-                    stage='business_rule', error_code='unverified_numeric_value',
-                    path='narrative', expected='numbers present in Agent Context',
-                    actual=match,
-                )
-
-
-def _quantitative_assessment(context):
-    source = context.get('quantitative_assessment') or {}
-    return {
-        'preliminary_regime': source.get('preliminary_regime'),
-        'suggested_strategy': source.get('suggested_strategy'),
-        'confidence': source.get('confidence'),
-        'risk_off': source.get('risk_off') is True,
-        'allow_new_long': source.get('allow_new_long') is True,
-        'explanation': [
-            item for item in (source.get('explanation') or [])
-            if isinstance(item, str) and item.strip()
-        ],
-    }
-
-
 def normalize_unified_analysis(data, context, *, already_standardized=False):
-    """Validate LLM comparison, verify evidence, and enforce risk limits."""
+    """Validate the LLM-only judgment. Backend comparison is intentionally absent."""
 
     if not isinstance(data, dict):
         raise UnifiedAnalysisValidationError(
-            'analysis must be a JSON object', error_code='invalid_type',
-            path='analysis', expected='object', actual=data,
+            'analysis must be object', error_code='invalid_type', path='analysis',
+            expected='object', actual=data,
         )
     if not already_standardized:
         data, _ = standardize_unified_analysis_input(data)
-    _require_exact_fields(data, TOP_LEVEL_FIELDS, 'analysis')
-
-    market = _section(data, 'final_market_assessment')
-    strategy = _section(data, 'final_strategy_assessment')
-    agreement = _section(data, 'quantitative_agreement')
-    risk = _section(data, 'risk_assessment')
-    _require_exact_fields(market, {'regime', 'direction', 'confidence', 'summary'}, 'final_market_assessment')
-    _require_exact_fields(
-        strategy,
-        {'selected_strategy', 'confidence', 'suitability', 'reason', 'why_not_alternatives'},
-        'final_strategy_assessment',
-    )
-    _require_exact_fields(agreement, {'agrees_with_backend', 'differences'}, 'quantitative_agreement')
-    _require_exact_fields(risk, {'risk_level', 'risk_off', 'allow_new_long', 'summary'}, 'risk_assessment')
-
+    _require_exact_fields(data, LLM_TOP_LEVEL_FIELDS, 'analysis')
+    market = _section(data, 'llm_market_assessment')
+    strategy = _section(data, 'llm_final_strategy_assessment')
+    risk = _section(data, 'llm_risk_assessment')
+    _require_exact_fields(market, {'regime', 'direction', 'confidence', 'summary'}, 'llm_market_assessment')
+    _require_exact_fields(strategy, {'selected_strategy', 'confidence', 'suitability', 'reason', 'why_not_alternatives'}, 'llm_final_strategy_assessment')
+    _require_exact_fields(risk, {'risk_level', 'summary'}, 'llm_risk_assessment')
     candidate_ids = _candidate_ids(context)
-    comparison = _normalize_strategy_comparison(data.get('strategy_comparison'), context, candidate_ids)
-    final_regime = _enum(market.get('regime'), ALLOWED_REGIMES, 'final_market_assessment.regime')
-    final_strategy = _enum(
-        strategy.get('selected_strategy'), set(candidate_ids),
-        'final_strategy_assessment.selected_strategy',
-    )
-    currently_allowed = _currently_allowed_ids(context, candidate_ids)
-    if final_strategy not in currently_allowed:
+    comparison = _normalize_comparison(data.get('llm_strategy_comparison'), context, candidate_ids)
+    selected = _enum(strategy.get('selected_strategy'), set(candidate_ids), 'llm_final_strategy_assessment.selected_strategy')
+    suitability = _enum(strategy.get('suitability'), ALLOWED_CANDIDATE_SUITABILITY, 'llm_final_strategy_assessment.suitability')
+    if comparison[selected]['suitability'] != suitability:
         raise UnifiedAnalysisValidationError(
-            'selected strategy is prohibited by current hard constraints',
-            reason_code='llm_strategy_not_allowed',
-            stage='business_rule', error_code='hard_constraint_violation',
-            path='final_strategy_assessment.selected_strategy',
-            expected='|'.join(sorted(currently_allowed)), actual=final_strategy,
-            illegal_strategy_id=final_strategy, hard_constraint_triggered=True,
+            'selected suitability contradicts comparison', error_code='cross_field_mismatch',
+            path='llm_final_strategy_assessment.suitability',
+            expected=comparison[selected]['suitability'], actual=suitability,
         )
-
-    final_suitability = _enum(
-        strategy.get('suitability'), ALLOWED_CANDIDATE_SUITABILITY,
-        'final_strategy_assessment.suitability',
-    )
-    if comparison[final_strategy]['suitability'] != final_suitability:
+    if selected in ACTIVE_STRATEGIES and suitability in {'low', 'insufficient_evidence'}:
         raise UnifiedAnalysisValidationError(
-            'final suitability contradicts strategy comparison',
-            error_code='cross_field_mismatch',
-            path='final_strategy_assessment.suitability',
-            expected=comparison[final_strategy]['suitability'], actual=final_suitability,
+            'low-evidence active strategy cannot be selected', stage='business_rule',
+            error_code='invalid_selected_suitability',
+            path='llm_final_strategy_assessment.suitability', expected='high|medium|not_allowed',
+            actual=suitability,
         )
-    if final_suitability in {'not_allowed', 'insufficient_evidence'}:
+    entry = (context.get('technical_analysis') or {}).get('mean_reversion_entry') or {}
+    if selected == STRATEGY_MEAN_REVERSION and entry.get('entry_conditions_met') is False:
         raise UnifiedAnalysisValidationError(
-            'selected strategy cannot be unavailable or prohibited',
-            stage='business_rule', error_code='invalid_selected_suitability',
-            path='final_strategy_assessment.suitability',
-            expected='high|medium|low', actual=final_suitability,
+            'mean reversion cannot be selected without its actual entry conditions',
+            reason_code='llm_strategy_validation_failed', stage='business_rule',
+            error_code='mean_reversion_entry_not_met',
+            path='llm_final_strategy_assessment.selected_strategy',
+            expected='no_strategy or another supported candidate', actual=selected,
         )
-    if final_strategy in ACTIVE_STRATEGIES and final_suitability == 'low':
-        raise UnifiedAnalysisValidationError(
-            'an active strategy with low suitability cannot be selected',
-            stage='business_rule', error_code='invalid_selected_suitability',
-            path='final_strategy_assessment.suitability',
-            expected='high|medium', actual=final_suitability,
-        )
-
-    why_not = _string_list(
-        strategy.get('why_not_alternatives'), 'final_strategy_assessment.why_not_alternatives',
-    )
+    why_not = _string_list(strategy.get('why_not_alternatives'), 'llm_final_strategy_assessment.why_not_alternatives')
     if len(why_not) < len(candidate_ids) - 1:
         raise UnifiedAnalysisValidationError(
-            'why_not_alternatives must address every non-selected candidate',
-            error_code='insufficient_items',
-            path='final_strategy_assessment.why_not_alternatives',
+            'why_not_alternatives must address every alternative',
+            error_code='insufficient_items', path='llm_final_strategy_assessment.why_not_alternatives',
             expected=f'at least {len(candidate_ids) - 1} strings', actual=len(why_not),
         )
-
-    agrees = _boolean(agreement.get('agrees_with_backend'), 'quantitative_agreement.agrees_with_backend')
-    differences = _string_list(agreement.get('differences'), 'quantitative_agreement.differences')
-    evidence = _normalize_evidence(
-        data.get('supporting_evidence'), context,
-        field_name='supporting_evidence', allow_empty=False,
-    )
-    limitations = _string_list(data.get('limitations'), 'limitations')
-
-    quantitative = _quantitative_assessment(context)
-    same_regime = final_regime == quantitative.get('preliminary_regime')
-    same_strategy = final_strategy == quantitative.get('suggested_strategy')
-    if agrees and not (same_regime and same_strategy):
+    expected_backtest = (context.get('strategy_evidence') or {}).get('backtest_evidence_available') is True
+    actual_backtest = _boolean(data.get('backtest_evidence_available'), 'backtest_evidence_available')
+    if actual_backtest != expected_backtest:
         raise UnifiedAnalysisValidationError(
-            'agreement contradicts final assessments',
-            error_code='cross_field_mismatch',
-            path='quantitative_agreement.agrees_with_backend',
-            expected='false when final regime or strategy differs', actual=agrees,
+            'backtest evidence availability contradicts context',
+            reason_code='llm_evidence_validation_failed', stage='evidence',
+            error_code='evidence_availability_mismatch', path='backtest_evidence_available',
+            expected=expected_backtest, actual=actual_backtest,
         )
-    if not agrees and not differences:
-        raise UnifiedAnalysisValidationError(
-            'differences are required when backend assessment is rejected',
-            error_code='insufficient_items', path='quantitative_agreement.differences',
-            expected='non-empty array of strings', actual=differences,
-        )
-
-    llm_allow_new_long = _boolean(risk.get('allow_new_long'), 'risk_assessment.allow_new_long')
-    llm_risk_off = _boolean(risk.get('risk_off'), 'risk_assessment.risk_off')
-    constraints = context.get('hard_constraints') or {}
-    backend_allow_new_long = constraints.get('allow_new_long') is True
-    backend_risk_off = constraints.get('risk_off') is True
-    if not backend_allow_new_long and llm_allow_new_long:
-        raise UnifiedAnalysisValidationError(
-            'allow_new_long=true attempts to relax a backend hard constraint',
-            reason_code='llm_strategy_not_allowed',
-            stage='business_rule', error_code='hard_constraint_violation',
-            path='risk_assessment.allow_new_long', expected=False,
-            actual=True, hard_constraint_triggered=True,
-        )
-    if backend_risk_off and not llm_risk_off:
-        raise UnifiedAnalysisValidationError(
-            'risk_off=false attempts to relax a backend hard constraint',
-            reason_code='llm_strategy_not_allowed',
-            stage='business_rule', error_code='hard_constraint_violation',
-            path='risk_assessment.risk_off', expected=True,
-            actual=False, hard_constraint_triggered=True,
-        )
-    effective_allow_new_long = llm_allow_new_long and backend_allow_new_long
-    effective_risk_off = llm_risk_off or backend_risk_off
-    if final_strategy in ACTIVE_STRATEGIES and (not effective_allow_new_long or effective_risk_off):
-        raise UnifiedAnalysisValidationError(
-            'active strategy conflicts with effective risk constraints',
-            reason_code='llm_strategy_not_allowed',
-            stage='business_rule', error_code='hard_constraint_violation',
-            path='final_strategy_assessment.selected_strategy',
-            expected='risk_off|no_strategy', actual=final_strategy,
-            illegal_strategy_id=final_strategy, hard_constraint_triggered=True,
-        )
-    if final_strategy == STRATEGY_RISK_OFF and not effective_risk_off:
-        raise UnifiedAnalysisValidationError(
-            'risk_off selection requires risk_off=true',
-            stage='business_rule', error_code='cross_field_mismatch',
-            path='risk_assessment.risk_off', expected=True, actual=False,
-        )
-
-    expected_backtest_evidence = (
-        (context.get('strategy_evidence') or {}).get('backtest_evidence_available') is True
-    )
-    llm_backtest_evidence = _boolean(data.get('backtest_evidence_available'), 'backtest_evidence_available')
-    if llm_backtest_evidence != expected_backtest_evidence:
-        raise UnifiedAnalysisValidationError(
-            'backtest_evidence_available contradicts the Agent Context',
-            reason_code='llm_evidence_validation_failed',
-            stage='business_rule', error_code='evidence_availability_mismatch',
-            path='backtest_evidence_available',
-            expected=expected_backtest_evidence, actual=llm_backtest_evidence,
-        )
-
-    market_confidence = _confidence(market.get('confidence'), 'final_market_assessment.confidence')
-    strategy_confidence = _confidence(strategy.get('confidence'), 'final_strategy_assessment.confidence')
-    comparison_interpretations = [
-        item['interpretation']
-        for candidate in comparison.values()
-        for key in ('supporting_factors', 'conflicting_factors')
-        for item in candidate[key]
-    ]
-    _validate_narrative_numbers(
-        [
-            market.get('summary'), strategy.get('reason'), risk.get('summary'),
-            *why_not, *differences, *limitations, *comparison_interpretations,
-            *[item['interpretation'] for item in evidence],
-        ],
-        context,
-        [market_confidence, strategy_confidence],
-    )
-
     return {
-        'analysis_version': AGENT_ANALYSIS_VERSION,
-        'analysis_status': 'success',
-        'decision_source': 'llm_synthesis',
-        'fallback_reason': None,
-        'final_market_assessment': {
-            'regime': final_regime,
-            'direction': _enum(market.get('direction'), ALLOWED_DIRECTIONS, 'final_market_assessment.direction'),
-            'confidence': market_confidence,
-            'summary': _string(market.get('summary'), 'final_market_assessment.summary'),
+        'llm_market_assessment': {
+            'regime': _enum(market.get('regime'), ALLOWED_REGIMES, 'llm_market_assessment.regime'),
+            'direction': _enum(market.get('direction'), ALLOWED_DIRECTIONS, 'llm_market_assessment.direction'),
+            'confidence': _confidence(market.get('confidence'), 'llm_market_assessment.confidence'),
+            'summary': _string(market.get('summary'), 'llm_market_assessment.summary'),
         },
-        'strategy_comparison': comparison,
-        'final_strategy_assessment': {
-            'selected_strategy': final_strategy,
-            'confidence': strategy_confidence,
-            'suitability': final_suitability,
-            'reason': _string(strategy.get('reason'), 'final_strategy_assessment.reason'),
+        'llm_strategy_comparison': comparison,
+        'llm_final_strategy_assessment': {
+            'selected_strategy': selected,
+            'confidence': _confidence(strategy.get('confidence'), 'llm_final_strategy_assessment.confidence'),
+            'suitability': suitability,
+            'reason': _string(strategy.get('reason'), 'llm_final_strategy_assessment.reason'),
             'why_not_alternatives': why_not,
         },
-        'quantitative_assessment': quantitative,
-        'quantitative_agreement': {'agrees_with_backend': agrees, 'differences': differences},
-        'risk_assessment': {
-            'risk_level': _enum(risk.get('risk_level'), ALLOWED_RISK_LEVELS, 'risk_assessment.risk_level'),
-            'risk_off': effective_risk_off,
-            'allow_new_long': effective_allow_new_long,
-            'summary': _string(risk.get('summary'), 'risk_assessment.summary'),
+        'llm_risk_assessment': {
+            'risk_level': _enum(risk.get('risk_level'), ALLOWED_RISK_LEVELS, 'llm_risk_assessment.risk_level'),
+            'summary': _string(risk.get('summary'), 'llm_risk_assessment.summary'),
         },
-        'backtest_evidence_available': llm_backtest_evidence,
-        'available_strategies': context.get('available_strategies') or [],
-        'related_backtest_strategy': context.get('related_backtest_strategy'),
-        'supporting_evidence': evidence,
-        'limitations': limitations,
+        'backtest_evidence_available': actual_backtest,
+        'supporting_evidence': _normalize_evidence(data.get('supporting_evidence'), context, path='supporting_evidence', allow_empty=False),
+        'limitations': _string_list(data.get('limitations'), 'limitations'),
     }
 
 
-def _fallback_direction(context):
-    direction = ((context.get('market_regime') or {}).get('direction') or '').lower()
-    return direction if direction in ALLOWED_DIRECTIONS else 'neutral'
+def _backend_assessment(context):
+    source = context.get('quantitative_assessment') or {}
+    return {
+        'available': source.get('available') is True,
+        'preliminary_regime': source.get('preliminary_regime'),
+        'suggested_strategy': source.get('suggested_strategy'),
+        'confidence': source.get('confidence'),
+        'confidence_label': source.get('confidence_label'),
+        'risk_off': source.get('risk_off') is True,
+        'allow_new_long': source.get('allow_new_long') is True,
+        'explanation': [item for item in (source.get('explanation') or []) if isinstance(item, str) and item.strip()],
+    }
 
 
-def _fallback_risk_level(context):
+def _agreement(backend, llm):
+    llm_market = llm['llm_market_assessment']
+    llm_strategy = llm['llm_final_strategy_assessment']
+    regime_agreement = backend.get('preliminary_regime') == llm_market.get('regime')
+    strategy_agreement = backend.get('suggested_strategy') == llm_strategy.get('selected_strategy')
+    differences = []
+    if not regime_agreement:
+        differences.append({
+            'field': 'regime', 'backend_value': backend.get('preliminary_regime'),
+            'llm_value': llm_market.get('regime'),
+            'summary': 'The deterministic regime classification and independent AI regime assessment differ.',
+        })
+    if not strategy_agreement:
+        differences.append({
+            'field': 'selected_strategy', 'backend_value': backend.get('suggested_strategy'),
+            'llm_value': llm_strategy.get('selected_strategy'),
+            'summary': 'The deterministic preliminary strategy and independent AI strategy selection differ.',
+        })
+    return {
+        'agrees_with_backend': regime_agreement and strategy_agreement,
+        'regime_agreement': regime_agreement,
+        'strategy_agreement': strategy_agreement,
+        'backend_preliminary_regime': backend.get('preliminary_regime'),
+        'llm_regime': llm_market.get('regime'),
+        'backend_suggested_strategy': backend.get('suggested_strategy'),
+        'llm_selected_strategy': llm_strategy.get('selected_strategy'),
+        'differences': differences,
+    }
+
+
+def _validated_decision(context, backend, llm_selected):
     constraints = context.get('hard_constraints') or {}
-    volatility = (context.get('market_regime') or {}).get('volatility') or {}
-    percentile = volatility.get('volatility_percentile')
-    if constraints.get('risk_off') is True:
-        return 'high'
-    if constraints.get('allow_new_long') is not True:
-        return 'medium'
-    if isinstance(percentile, (int, float)) and percentile >= 0.85:
-        return 'high'
-    return 'medium'
+    allowed = _currently_allowed_ids(context, list(AGENT_STRATEGY_IDS))
+    final = llm_selected
+    reason = None
+    if constraints.get('risk_off') is True and llm_selected != STRATEGY_RISK_OFF:
+        final = STRATEGY_RISK_OFF
+        reason = 'The deterministic risk engine requires the defensive Risk-Off state.'
+    elif constraints.get('allow_new_long') is not True and llm_selected in ACTIVE_STRATEGIES:
+        final = STRATEGY_RISK_OFF
+        reason = 'New long exposure is prohibited by the deterministic risk engine.'
+    elif llm_selected not in allowed:
+        final = STRATEGY_RISK_OFF if STRATEGY_RISK_OFF in allowed else STRATEGY_NO_STRATEGY
+        reason = 'The independent AI selection is not permitted by current deterministic constraints.'
+    override = final != llm_selected
+    return {
+        'backend_preliminary_strategy': backend.get('suggested_strategy'),
+        'llm_selected_strategy': llm_selected,
+        'validated_final_strategy': final,
+        'hard_constraint_override_applied': override,
+        'override_reason': reason,
+        'decision_source': 'llm_synthesis_with_constraint_override' if override else 'llm_synthesis',
+        'fallback_used': False,
+        'backend_hard_constraints': {
+            'risk_off': constraints.get('risk_off') is True,
+            'allow_new_long': constraints.get('allow_new_long') is True,
+            'allowed_strategy_ids': sorted(allowed),
+        },
+    }
 
 
-def _fallback_confidence(value, default=0.0):
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return default
-    return round(min(1.0, max(0.0, float(value))), 6)
+def build_validated_system_analysis(context, llm_assessment, *, backend_suggestion_exposed=False):
+    backend = _backend_assessment(context)
+    selected = llm_assessment['llm_final_strategy_assessment']['selected_strategy']
+    decision = _validated_decision(context, backend, selected)
+    analysis = {
+        'analysis_version': AGENT_ANALYSIS_VERSION,
+        'analysis_status': 'success',
+        'decision_source': decision['decision_source'],
+        'fallback_reason': None,
+        'llm_assessment_mode': 'independent',
+        'backend_suggestion_exposed_to_llm': backend_suggestion_exposed,
+        'backend_quantitative_assessment': backend,
+        'llm_independent_assessment': llm_assessment,
+        'quantitative_agreement': _agreement(backend, llm_assessment),
+        'validated_system_decision': decision,
+        'available_strategies': deepcopy(context.get('available_strategies') or []),
+    }
+    analysis.update({
+        # Read-only v3 compatibility projection for stored responses and older clients.
+        'final_market_assessment': deepcopy(llm_assessment['llm_market_assessment']),
+        'strategy_comparison': deepcopy(llm_assessment['llm_strategy_comparison']),
+        'final_strategy_assessment': deepcopy(llm_assessment['llm_final_strategy_assessment']),
+        'quantitative_assessment': deepcopy(backend),
+        'risk_assessment': {
+            **deepcopy(llm_assessment['llm_risk_assessment']),
+            'risk_off': (context.get('hard_constraints') or {}).get('risk_off') is True,
+            'allow_new_long': (context.get('hard_constraints') or {}).get('allow_new_long') is True,
+        },
+        'backtest_evidence_available': llm_assessment['backtest_evidence_available'],
+        'supporting_evidence': deepcopy(llm_assessment['supporting_evidence']),
+        'limitations': deepcopy(llm_assessment['limitations']),
+    })
+    return analysis
+
+
+def _fallback_strategy(context, backend):
+    constraints = context.get('hard_constraints') or {}
+    allowed = _currently_allowed_ids(context, list(AGENT_STRATEGY_IDS))
+    if constraints.get('risk_off') is True and STRATEGY_RISK_OFF in allowed:
+        return STRATEGY_RISK_OFF
+    suggested = backend.get('suggested_strategy')
+    if suggested in allowed:
+        return suggested
+    if constraints.get('allow_new_long') is not True and STRATEGY_RISK_OFF in allowed:
+        return STRATEGY_RISK_OFF
+    return STRATEGY_NO_STRATEGY
 
 
 def build_quantitative_fallback(context, fallback_reason):
-    """Convert deterministic preliminary facts into a safe v3 response."""
-
-    quantitative = _quantitative_assessment(context)
+    backend = _backend_assessment(context)
+    final = _fallback_strategy(context, backend)
     constraints = context.get('hard_constraints') or {}
-    explanations = quantitative.get('explanation') or []
-    candidate_ids = _candidate_ids(context)
-    currently_allowed = _currently_allowed_ids(context, candidate_ids)
-    suggested = quantitative.get('suggested_strategy')
-    allow_new_long = constraints.get('allow_new_long') is True
-    risk_off = constraints.get('risk_off') is True
-    if risk_off and STRATEGY_RISK_OFF in currently_allowed:
-        selected_strategy = STRATEGY_RISK_OFF
-    elif not allow_new_long and STRATEGY_NO_STRATEGY in currently_allowed:
-        selected_strategy = STRATEGY_NO_STRATEGY
-    elif suggested in currently_allowed:
-        selected_strategy = suggested
-    else:
-        selected_strategy = STRATEGY_NO_STRATEGY
-
-    comparison = {}
-    for strategy_id in candidate_ids:
-        if strategy_id not in currently_allowed:
-            suitability = 'not_allowed'
-        elif strategy_id == selected_strategy:
-            suitability = 'high'
-        elif strategy_id == suggested:
-            suitability = 'medium'
-        else:
-            suitability = 'insufficient_evidence'
-        comparison[strategy_id] = {
-            'suitability': suitability,
-            'supporting_factors': [],
-            'conflicting_factors': [],
-        }
-
-    preferred_factors = {
-        'Preliminary Regime', 'Suggested Strategy', 'ADX',
-        'Choppiness Index', 'Volatility Percentile',
-    }
-    evidence = [
-        {
-            'factor': item['factor'],
-            'value': item['value'],
-            'interpretation': 'Deterministic input retained for the quantitative fallback.',
-        }
-        for item in (context.get('evidence_catalog') or [])
-        if isinstance(item, dict) and item.get('factor') in preferred_factors
-    ][:4]
-    limitations = [
-        'DeepSeek synthesis was unavailable; the final result uses the deterministic quantitative fallback.',
-        'Comparable candidate backtest evidence is unavailable.',
-    ]
-    data_quality = context.get('data_quality') or {}
-    unavailable = [name for name, available in data_quality.items() if available is False]
-    if unavailable:
-        limitations.append('Unavailable context modules: ' + ', '.join(sorted(unavailable)) + '.')
-
-    same_strategy = selected_strategy == suggested
-    differences = [] if same_strategy else [
-        'The safe fallback strategy differs from the preliminary strategy because current hard constraints prohibit it.'
-    ]
-    why_not = [
-        f'{strategy_id} was not selected because the deterministic fallback ranked it below {selected_strategy}.'
-        for strategy_id in candidate_ids if strategy_id != selected_strategy
-    ]
-    return {
+    analysis = {
         'analysis_version': AGENT_ANALYSIS_VERSION,
         'analysis_status': 'fallback',
         'decision_source': 'quantitative_fallback',
         'fallback_reason': fallback_reason,
+        'llm_assessment_mode': 'unavailable',
+        'backend_suggestion_exposed_to_llm': False,
+        'backend_quantitative_assessment': backend,
+        'llm_independent_assessment': None,
+        'quantitative_agreement': {
+            'agrees_with_backend': None, 'regime_agreement': None,
+            'strategy_agreement': None,
+            'backend_preliminary_regime': backend.get('preliminary_regime'),
+            'llm_regime': None,
+            'backend_suggested_strategy': backend.get('suggested_strategy'),
+            'llm_selected_strategy': None,
+            'differences': [],
+        },
+        'validated_system_decision': {
+            'backend_preliminary_strategy': backend.get('suggested_strategy'),
+            'llm_selected_strategy': None,
+            'validated_final_strategy': final,
+            'hard_constraint_override_applied': final != backend.get('suggested_strategy'),
+            'override_reason': (
+                'The deterministic risk engine overrode the preliminary active strategy.'
+                if final != backend.get('suggested_strategy') else None
+            ),
+            'decision_source': 'quantitative_fallback',
+            'fallback_used': True,
+            'backend_hard_constraints': {
+                'risk_off': constraints.get('risk_off') is True,
+                'allow_new_long': constraints.get('allow_new_long') is True,
+                'allowed_strategy_ids': sorted(_currently_allowed_ids(context, list(AGENT_STRATEGY_IDS))),
+            },
+        },
+        'available_strategies': deepcopy(context.get('available_strategies') or []),
+    }
+    candidate_ids = [item.get('id') for item in analysis['available_strategies'] if item.get('id')] or list(AGENT_STRATEGY_IDS)
+    comparison = {
+        strategy_id: {
+            'suitability': 'high' if strategy_id == final else 'insufficient_evidence',
+            'supporting_factors': [], 'conflicting_factors': [],
+        }
+        for strategy_id in candidate_ids
+    }
+    analysis.update({
+        # Read-only v3 compatibility projection for stored responses and older clients.
         'final_market_assessment': {
-            'regime': quantitative.get('preliminary_regime'),
-            'direction': _fallback_direction(context),
-            'confidence': _fallback_confidence(quantitative.get('confidence')),
-            'summary': explanations[0] if explanations else 'Deterministic market regime retained as the fallback assessment.',
+            'regime': backend.get('preliminary_regime'),
+            'direction': str((context.get('market_regime') or {}).get('direction') or 'neutral').lower(),
+            'confidence': backend.get('confidence') or 0.0,
+            'summary': (backend.get('explanation') or ['Deterministic fallback assessment.'])[0],
         },
         'strategy_comparison': comparison,
         'final_strategy_assessment': {
-            'selected_strategy': selected_strategy,
-            'confidence': _fallback_confidence(quantitative.get('confidence')),
-            'suitability': comparison[selected_strategy]['suitability'],
-            'reason': explanations[-1] if explanations else 'Deterministic strategy selection retained as the fallback assessment.',
-            'why_not_alternatives': why_not,
+            'selected_strategy': final, 'confidence': backend.get('confidence') or 0.0,
+            'suitability': comparison[final]['suitability'],
+            'reason': (backend.get('explanation') or ['Deterministic fallback strategy.'])[-1],
+            'why_not_alternatives': [
+                f'{strategy_id} was not selected by the deterministic fallback.'
+                for strategy_id in candidate_ids if strategy_id != final
+            ],
         },
-        'quantitative_assessment': quantitative,
-        'quantitative_agreement': {
-            'agrees_with_backend': same_strategy,
-            'differences': differences,
-        },
+        'quantitative_assessment': deepcopy(backend),
         'risk_assessment': {
-            'risk_level': _fallback_risk_level(context),
-            'risk_off': risk_off,
-            'allow_new_long': allow_new_long,
-            'summary': 'Django hard risk constraints remain authoritative in fallback mode.',
+            'risk_level': 'high' if constraints.get('risk_off') is True else 'medium',
+            'risk_off': constraints.get('risk_off') is True,
+            'allow_new_long': constraints.get('allow_new_long') is True,
+            'summary': 'Django hard constraints remain authoritative in fallback mode.',
         },
-        'backtest_evidence_available': (
-            (context.get('strategy_evidence') or {}).get('backtest_evidence_available') is True
-        ),
-        'available_strategies': context.get('available_strategies') or [],
-        'related_backtest_strategy': context.get('related_backtest_strategy'),
-        'supporting_evidence': evidence,
-        'limitations': limitations,
-    }
+        'backtest_evidence_available': False,
+        'supporting_evidence': [],
+        'limitations': ['Independent AI assessment was unavailable; deterministic fallback was used.'],
+    })
+    return analysis
 
 
 __all__ = [
     'AGENT_ANALYSIS_PROMPT_VERSION', 'AGENT_ANALYSIS_VERSION',
     'UnifiedAnalysisValidationError', 'build_quantitative_fallback',
-    'has_forbidden_action_language', 'has_open_close_direction_contradiction',
-    'normalize_unified_analysis', 'standardize_unified_analysis_input',
+    'build_validated_system_analysis', 'has_forbidden_action_language',
+    'has_open_close_direction_contradiction', 'normalize_unified_analysis',
+    'standardize_unified_analysis_input',
 ]

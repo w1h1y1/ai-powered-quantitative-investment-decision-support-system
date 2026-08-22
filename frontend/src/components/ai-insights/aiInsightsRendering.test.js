@@ -124,6 +124,43 @@ const hybridAnalysis = {
   limitations: ['Strategy-specific comparison backtests are unavailable.'],
 }
 
+const dualAnalysis = {
+  analysis_version: 'investment_agent_analysis_v4',
+  analysis_status: 'success',
+  decision_source: 'llm_synthesis_with_constraint_override',
+  llm_assessment_mode: 'independent',
+  backend_suggestion_exposed_to_llm: false,
+  available_strategies: hybridAnalysis.available_strategies,
+  backend_quantitative_assessment: hybridAnalysis.quantitative_assessment,
+  llm_independent_assessment: {
+    llm_market_assessment: hybridAnalysis.final_market_assessment,
+    llm_strategy_comparison: hybridAnalysis.strategy_comparison,
+    llm_final_strategy_assessment: hybridAnalysis.final_strategy_assessment,
+    llm_risk_assessment: { risk_level: 'medium', summary: 'Independent risk review.' },
+    backtest_evidence_available: false,
+    supporting_evidence: hybridAnalysis.supporting_evidence,
+    limitations: hybridAnalysis.limitations,
+  },
+  quantitative_agreement: {
+    agrees_with_backend: false,
+    regime_agreement: false,
+    strategy_agreement: false,
+    differences: [{
+      field: 'selected_strategy',
+      summary: 'The deterministic and independent strategy selections differ.',
+    }],
+  },
+  validated_system_decision: {
+    backend_preliminary_strategy: 'trend_following',
+    llm_selected_strategy: 'mean_reversion',
+    validated_final_strategy: 'risk_off',
+    hard_constraint_override_applied: true,
+    override_reason: 'New long exposure is prohibited by the deterministic risk engine.',
+    decision_source: 'llm_synthesis_with_constraint_override',
+    fallback_used: false,
+  },
+}
+
 test('empty state no longer exposes rule-based mock UI', () => {
   const text = render(components.EmptyState)
   assert.match(text, /No AI analysis generated yet/)
@@ -249,7 +286,7 @@ test('hybrid decision cards distinguish final and preliminary assessments', () =
   const quantitativeText = render(components.QuantitativeAssessmentCard, { analysis: hybridAnalysis })
   const agreementText = render(components.QuantitativeAgreementCard, { analysis: hybridAnalysis })
 
-  assert.match(finalText, /Final AI Assessment/)
+  assert.match(finalText, /Independent AI Assessment/)
   assert.match(finalText, /Sideways Range/)
   assert.match(strategyText, /Mean Reversion/)
   assert.match(strategyText, /Confidence 74.00%/)
@@ -258,6 +295,48 @@ test('hybrid decision cards distinguish final and preliminary assessments', () =
   assert.match(quantitativeText, /Trend Following/)
   assert.match(agreementText, /Disagree/)
   assert.match(agreementText, /Final regime is sideways rather than bullish/)
+})
+
+test('v4 renders backend, independent AI, and validated system decision separately', () => {
+  const backendText = render(components.QuantitativeAssessmentCard, { analysis: dualAnalysis })
+  const aiText = render(components.FinalAIAssessmentCard, { analysis: dualAnalysis })
+  const decisionText = render(components.ValidatedSystemDecisionCard, { analysis: dualAnalysis })
+
+  assert.match(backendText, /Quantitative Engine Assessment/)
+  assert.match(backendText, /Trend Following/)
+  assert.match(aiText, /Independent AI Assessment/)
+  assert.match(aiText, /generated independently without receiving the backend’s suggested strategy/)
+  assert.match(decisionText, /Validated System Decision/)
+  assert.match(decisionText, /Final Validated Strategy Defensive \/ Risk-Off/)
+  assert.match(decisionText, /Original AI Selection Mean Reversion/)
+  assert.match(decisionText, /Hard Constraint Override Applied/)
+})
+
+test('independence badge is hidden unless backend suggestion exposure is explicitly false', () => {
+  const exposed = { ...dualAnalysis, backend_suggestion_exposed_to_llm: true }
+  const text = render(components.FinalAIAssessmentCard, { analysis: exposed })
+  assert.doesNotMatch(text, /generated independently without receiving/)
+})
+
+test('v4 fallback renders backend and system result without claiming AI success', () => {
+  const fallback = {
+    ...dualAnalysis,
+    analysis_status: 'fallback',
+    decision_source: 'quantitative_fallback',
+    llm_assessment_mode: 'unavailable',
+    llm_independent_assessment: null,
+    validated_system_decision: {
+      ...dualAnalysis.validated_system_decision,
+      llm_selected_strategy: null,
+      validated_final_strategy: 'trend_following',
+      hard_constraint_override_applied: false,
+      decision_source: 'quantitative_fallback',
+      fallback_used: true,
+    },
+  }
+  const text = render(components.ValidatedSystemDecisionCard, { analysis: fallback })
+  assert.match(text, /Fallback Yes/)
+  assert.doesNotMatch(text, /Original AI Selection/)
 })
 
 test('strategy comparison renders every backend-named candidate and verified factors', () => {

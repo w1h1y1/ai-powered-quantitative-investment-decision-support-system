@@ -1,4 +1,4 @@
-"""DeepSeek reads the versioned unified context and returns v3 synthesis."""
+"""Run isolated LLM judgment, validate it, then merge with Django judgment."""
 
 import logging
 
@@ -14,6 +14,7 @@ from .unified_analysis_schema import (
     AGENT_ANALYSIS_VERSION,
     UnifiedAnalysisValidationError,
     build_quantitative_fallback,
+    build_validated_system_analysis,
     has_open_close_direction_contradiction,
     has_forbidden_action_language,
     normalize_unified_analysis,
@@ -21,6 +22,9 @@ from .unified_analysis_schema import (
 )
 from .unified_context_service import (
     AGENT_UNIFIED_CONTEXT_VERSION,
+    LLM_STRATEGY_CONTEXT_VERSION,
+    backend_suggestion_exposed_to_llm,
+    build_llm_strategy_context,
     build_unified_agent_context,
 )
 
@@ -50,6 +54,8 @@ def _metadata(
     formatting_normalizations=None,
     hard_constraint_violation_detected=False,
     hard_constraint_override_applied=False,
+    llm_context=None,
+    llm_assessment_mode='independent',
 ):
     return {
         'provider': provider,
@@ -57,6 +63,14 @@ def _metadata(
         'as_of_date': context.get('as_of_date'),
         'prompt_version': AGENT_ANALYSIS_PROMPT_VERSION,
         'analysis_version': AGENT_ANALYSIS_VERSION,
+        'llm_context_version': (
+            (llm_context or {}).get('llm_context_version')
+            or LLM_STRATEGY_CONTEXT_VERSION
+        ),
+        'llm_assessment_mode': llm_assessment_mode,
+        'backend_suggestion_exposed_to_llm': backend_suggestion_exposed_to_llm(
+            llm_context or {},
+        ),
         'schema_repair_attempted': schema_repair_attempted,
         'schema_repair_succeeded': schema_repair_succeeded,
         'formatting_normalizations': sorted(set(formatting_normalizations or [])),
@@ -78,11 +92,14 @@ def _fallback(
     schema_repair_attempted=False,
     formatting_normalizations=None,
     hard_constraint_violation_detected=False,
+    llm_context=None,
 ):
     details = validation_error.safe_details() if validation_error else {}
     stage = details.get('validation_stage') or validation_stage
     error_code = details.get('validation_error_code') or validation_error_code
     error_path = details.get('validation_error_path')
+    error_value = details.get('validation_error_value')
+    source_path = details.get('validation_source_path')
     hard_constraint_detected = (
         hard_constraint_violation_detected
         or details.get('hard_constraint_triggered') is True
@@ -90,7 +107,7 @@ def _fallback(
     logger.warning(
         'Agent analysis fallback provider=%s model=%s symbol=%s '
         'prompt_version=%s analysis_version=%s reason_code=%s stage=%s '
-        'error_code=%s path=%s expected=%s actual_type=%s actual=%r '
+        'error_code=%s path=%s source_path=%s expected=%s actual_type=%s actual=%r '
         'missing_fields=%s extra_fields=%s illegal_strategy_id=%s '
         'hard_constraint_triggered=%s schema_repair_attempted=%s reason=%s',
         provider,
@@ -102,6 +119,7 @@ def _fallback(
         stage,
         error_code,
         error_path,
+        source_path,
         details.get('expected'),
         details.get('actual_type'),
         details.get('actual'),
@@ -111,6 +129,11 @@ def _fallback(
         hard_constraint_detected,
         schema_repair_attempted,
         reason,
+    )
+    fallback_analysis = build_quantitative_fallback(context, reason_code)
+    fallback_override = (
+        (fallback_analysis.get('validated_system_decision') or {})
+        .get('hard_constraint_override_applied') is True
     )
     return {
         'symbol': context.get('symbol'),
@@ -122,15 +145,23 @@ def _fallback(
         'validation_stage': stage,
         'validation_error_code': error_code,
         'validation_error_path': error_path,
-        'hard_constraint_override_applied': hard_constraint_detected,
-        'analysis': build_quantitative_fallback(context, reason_code),
+        'validation_error_value': error_value,
+        'validation_source_path': source_path,
+        'llm_assessment_mode': 'unavailable',
+        'backend_suggestion_exposed_to_llm': backend_suggestion_exposed_to_llm(
+            llm_context or {},
+        ),
+        'hard_constraint_override_applied': fallback_override,
+        'analysis': fallback_analysis,
         'metadata': _metadata(
             context, provider, model,
             schema_repair_attempted=schema_repair_attempted,
             schema_repair_succeeded=False,
             formatting_normalizations=formatting_normalizations,
             hard_constraint_violation_detected=hard_constraint_detected,
-            hard_constraint_override_applied=hard_constraint_detected,
+            hard_constraint_override_applied=fallback_override,
+            llm_context=llm_context,
+            llm_assessment_mode='unavailable',
         ),
     }
 
@@ -144,17 +175,27 @@ def _success(
     schema_repair_attempted=False,
     formatting_normalizations=None,
     hard_constraint_violation_detected=False,
+    llm_context=None,
 ):
+    decision = analysis.get('validated_system_decision') or {}
+    override = decision.get('hard_constraint_override_applied') is True
+    decision_source = decision.get('decision_source') or 'llm_synthesis'
     return {
         'symbol': context.get('symbol'),
         'context_version': context.get('context_version'),
         'analysis_status': 'success',
-        'decision_source': 'llm_synthesis',
+        'decision_source': decision_source,
         'fallback_reason': None,
         'validation_stage': None,
         'validation_error_code': None,
         'validation_error_path': None,
-        'hard_constraint_override_applied': False,
+        'validation_error_value': None,
+        'validation_source_path': None,
+        'llm_assessment_mode': 'independent',
+        'backend_suggestion_exposed_to_llm': backend_suggestion_exposed_to_llm(
+            llm_context or {},
+        ),
+        'hard_constraint_override_applied': override,
         'analysis': analysis,
         'metadata': _metadata(
             context, provider, model,
@@ -162,7 +203,8 @@ def _success(
             schema_repair_succeeded=schema_repair_attempted,
             formatting_normalizations=formatting_normalizations,
             hard_constraint_violation_detected=hard_constraint_violation_detected,
-            hard_constraint_override_applied=False,
+            hard_constraint_override_applied=override,
+            llm_context=llm_context,
         ),
     }
 
@@ -215,12 +257,13 @@ def _log_validation_error(error, *, symbol, provider, model, attempt):
     logger.warning(
         'LLM validation failed provider=%s model=%s symbol=%s attempt=%s '
         'prompt_version=%s analysis_version=%s stage=%s error_code=%s '
-        'path=%s expected=%s actual_type=%s actual=%r missing_fields=%s '
+        'path=%s source_path=%s expected=%s actual_type=%s actual=%r missing_fields=%s '
         'extra_fields=%s illegal_strategy_id=%s hard_constraint_triggered=%s',
         provider, model, symbol, attempt,
         AGENT_ANALYSIS_PROMPT_VERSION, AGENT_ANALYSIS_VERSION,
         details.get('validation_stage'), details.get('validation_error_code'),
-        details.get('validation_error_path'), details.get('expected'),
+        details.get('validation_error_path'), details.get('validation_source_path'),
+        details.get('expected'),
         details.get('actual_type'), details.get('actual'),
         details.get('missing_fields'), details.get('extra_fields'),
         details.get('illegal_strategy_id'), details.get('hard_constraint_triggered'),
@@ -231,6 +274,7 @@ def run_agent_analysis(security, user, *, provider=None):
     """Build context, call DeepSeek, validate, and return structured analysis."""
 
     context = build_unified_agent_context(security, user)
+    llm_context = build_llm_strategy_context(context)
     if context.get('context_version') != AGENT_UNIFIED_CONTEXT_VERSION:
         return _fallback(
             context,
@@ -240,6 +284,7 @@ def run_agent_analysis(security, user, *, provider=None):
             'Unsupported agent context version.',
             validation_stage='schema',
             validation_error_code='unsupported_context_version',
+            llm_context=llm_context,
         )
 
     llm_provider = provider
@@ -259,6 +304,7 @@ def run_agent_analysis(security, user, *, provider=None):
             'LLM service is not configured.',
             validation_stage='api',
             validation_error_code='unsupported_provider',
+            llm_context=llm_context,
         )
 
     if not llm_provider.is_configured():
@@ -270,16 +316,17 @@ def run_agent_analysis(security, user, *, provider=None):
             'LLM service is not configured.',
             validation_stage='api',
             validation_error_code='api_key_missing',
+            llm_context=llm_context,
         )
 
     first = llm_provider.generate_structured_analysis(
-        build_unified_analysis_prompt(context),
+        build_unified_analysis_prompt(llm_context),
     )
     result = first
     schema_repair_attempted = False
     formatting_normalizations = []
     hard_constraint_violation_detected = False
-    analysis, validation_error, changes = _normalize_result(result, context)
+    analysis, validation_error, changes = _normalize_result(result, llm_context)
     formatting_normalizations.extend(changes)
 
     if validation_error is not None:
@@ -293,11 +340,11 @@ def run_agent_analysis(security, user, *, provider=None):
     if should_repair:
         if validation_error is not None:
             repair_prompt = build_schema_repair_prompt(
-                context, validation_error.safe_details(),
+                llm_context, validation_error.safe_details(),
             )
         else:
             repair_prompt = build_strict_json_retry_prompt(
-                context,
+                llm_context,
                 {
                     'validation_stage': 'json_parse',
                     'validation_error_code': result.failure_reason,
@@ -306,7 +353,7 @@ def run_agent_analysis(security, user, *, provider=None):
             )
         result = llm_provider.generate_structured_analysis(repair_prompt)
         schema_repair_attempted = True
-        analysis, validation_error, changes = _normalize_result(result, context)
+        analysis, validation_error, changes = _normalize_result(result, llm_context)
         formatting_normalizations.extend(changes)
         if validation_error is not None:
             hard_constraint_violation_detected = (
@@ -335,6 +382,7 @@ def run_agent_analysis(security, user, *, provider=None):
             schema_repair_attempted=schema_repair_attempted,
             formatting_normalizations=formatting_normalizations,
             hard_constraint_violation_detected=hard_constraint_violation_detected,
+            llm_context=llm_context,
         )
     if analysis is None:
         return _fallback(
@@ -347,11 +395,18 @@ def run_agent_analysis(security, user, *, provider=None):
             schema_repair_attempted=schema_repair_attempted,
             formatting_normalizations=formatting_normalizations,
             hard_constraint_violation_detected=hard_constraint_violation_detected,
+            llm_context=llm_context,
         )
 
+    merged_analysis = build_validated_system_analysis(
+        context,
+        analysis,
+        backend_suggestion_exposed=backend_suggestion_exposed_to_llm(llm_context),
+    )
     return _success(
-        context, provider_name, model, analysis,
+        context, provider_name, model, merged_analysis,
         schema_repair_attempted=schema_repair_attempted,
         formatting_normalizations=formatting_normalizations,
         hard_constraint_violation_detected=hard_constraint_violation_detected,
+        llm_context=llm_context,
     )

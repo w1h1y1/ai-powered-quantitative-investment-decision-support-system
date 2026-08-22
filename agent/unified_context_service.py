@@ -5,6 +5,7 @@ It never recalculates regime, never replaces indicator formulas, and never
 produces investment advice.
 """
 
+from copy import deepcopy
 from datetime import date
 from decimal import Decimal
 
@@ -14,6 +15,7 @@ from backtest.services import (
     BacktestMarketDataRateLimited,
     BacktestMarketDataUnavailable,
     StrategyParameters,
+    calculate_bollinger_lower,
     calculate_macd,
     calculate_simple_moving_average,
     run_market_regime_core_swing_backtest,
@@ -38,6 +40,7 @@ from portfolio.services import get_portfolio_summary
 
 
 AGENT_UNIFIED_CONTEXT_VERSION = 'agent_context_v2'
+LLM_STRATEGY_CONTEXT_VERSION = 'llm_strategy_context_v1'
 
 REGIME_DIRECTION_LABELS = {
     'bullish_trend': 'Bullish',
@@ -174,6 +177,7 @@ def _technical_payload(security, market_regime_result):
     ma20 = calculate_simple_moving_average(bars, 20)
     ma60 = calculate_simple_moving_average(bars, 60)
     ma200 = calculate_simple_moving_average(bars, 200)
+    bollinger_lower = calculate_bollinger_lower(bars)
     macd, macd_signal, macd_histogram = calculate_macd(bars)
     close = bars[-1].close
 
@@ -190,6 +194,14 @@ def _technical_payload(security, market_regime_result):
     volatility = market_regime_result.get('volatility') or {}
     relative_strength = market_regime_result.get('relative_strength') or {}
 
+    rsi = _number(momentum.get('rsi'), 4)
+    lower_band = _number(bollinger_lower[-1], 4)
+    latest_close = _number(close, 4)
+    price_condition = (
+        latest_close is not None and lower_band is not None
+        and latest_close <= lower_band
+    )
+    rsi_condition = rsi is not None and rsi <= 35
     return {
         'available': True,
         'moving_averages': {
@@ -201,7 +213,7 @@ def _technical_payload(security, market_regime_result):
             'price_vs_ma200': price_vs_ma(ma200[-1]),
         },
         'momentum': {
-            'rsi': _number(momentum.get('rsi'), 4),
+            'rsi': rsi,
             'macd': _number(macd[-1], 6),
             'macd_signal': _number(macd_signal[-1], 6),
             'macd_histogram': _number(
@@ -221,6 +233,13 @@ def _technical_payload(security, market_regime_result):
             'vs_sector_20d': _number(relative_strength.get('vs_sector_20d'), 6),
             'vs_sector_60d': _number(relative_strength.get('vs_sector_60d'), 6),
             'score': _number(relative_strength.get('score'), 6),
+        },
+        'mean_reversion_entry': {
+            'bollinger_lower_20_2': lower_band,
+            'rsi_entry_threshold': 35.0,
+            'close_at_or_below_lower_band': price_condition,
+            'rsi_at_or_below_threshold': rsi_condition,
+            'entry_conditions_met': price_condition and rsi_condition,
         },
     }
 
@@ -634,7 +653,107 @@ def build_unified_agent_context(security, user, *, benchmark=None):
     }
 
 
+def build_llm_strategy_context(context):
+    """Derive a neutral LLM context without backend regime/strategy opinions."""
+
+    strategies = []
+    for definition in context.get('available_strategies') or []:
+        neutral = deepcopy(definition)
+        guidance = neutral.pop('preliminary_selection_rationale', None)
+        if guidance:
+            neutral['general_evaluation_guidance'] = guidance
+        strategies.append(neutral)
+
+    market_regime = context.get('market_regime') or {}
+    source_catalog = context.get('evidence_catalog') or []
+    excluded_paths = {
+        'quantitative_assessment.preliminary_regime',
+        'quantitative_assessment.suggested_strategy',
+        'quantitative_assessment.risk_off',
+        'quantitative_assessment.allow_new_long',
+    }
+    path_rewrites = {
+        'market_regime.choppiness': 'market_conditions.choppiness',
+        'market_regime.volatility.atr_percent': 'market_conditions.volatility.atr_percent',
+        'market_regime.volatility.realized_volatility_20d': 'market_conditions.volatility.realized_volatility_20d',
+        'market_regime.volatility.volatility_percentile': 'market_conditions.volatility.volatility_percentile',
+    }
+    evidence_catalog = []
+    for item in source_catalog:
+        if not isinstance(item, dict) or item.get('source_path') in excluded_paths:
+            continue
+        copied = deepcopy(item)
+        copied['source_path'] = path_rewrites.get(
+            copied.get('source_path'), copied.get('source_path'),
+        )
+        evidence_catalog.append(copied)
+    evidence_catalog.append({
+        'factor': 'Market Data Available',
+        'source_path': 'market_data.available',
+        'value': (context.get('market_data') or {}).get('available') is True,
+    })
+
+    technical = deepcopy(context.get('technical_analysis') or {})
+    mean_reversion = technical.get('mean_reversion_entry') or {}
+    for factor, field in (
+        ('Mean Reversion Lower Band', 'bollinger_lower_20_2'),
+        ('Mean Reversion RSI Threshold', 'rsi_entry_threshold'),
+        ('Close At Or Below Lower Band', 'close_at_or_below_lower_band'),
+        ('RSI At Or Below Entry Threshold', 'rsi_at_or_below_threshold'),
+        ('Mean Reversion Entry Conditions Met', 'entry_conditions_met'),
+    ):
+        value = mean_reversion.get(field)
+        if value is not None:
+            evidence_catalog.append({
+                'factor': factor,
+                'source_path': f'technical_analysis.mean_reversion_entry.{field}',
+                'value': value,
+            })
+
+    return {
+        'llm_context_version': LLM_STRATEGY_CONTEXT_VERSION,
+        'symbol': context.get('symbol'),
+        'as_of_date': context.get('as_of_date'),
+        'security': deepcopy(context.get('security') or {}),
+        'market_data': deepcopy(context.get('market_data') or {}),
+        'technical_analysis': technical,
+        'market_conditions': {
+            'choppiness': market_regime.get('choppiness'),
+            'volatility': deepcopy(market_regime.get('volatility') or {}),
+        },
+        'market_context': deepcopy(context.get('market_context') or {}),
+        'portfolio_context': deepcopy(context.get('portfolio_context') or {}),
+        'backtest_context': deepcopy(context.get('backtest_context') or {}),
+        'hard_constraints': deepcopy(context.get('hard_constraints') or {}),
+        'available_strategies': strategies,
+        'related_backtest_strategy': deepcopy(context.get('related_backtest_strategy') or {}),
+        'strategy_evidence': deepcopy(context.get('strategy_evidence') or {}),
+        'evidence_catalog': evidence_catalog,
+        'data_quality': deepcopy(context.get('data_quality') or {}),
+    }
+
+
+def backend_suggestion_exposed_to_llm(llm_context):
+    """Return true if a forbidden backend-opinion key leaked into LLM input."""
+
+    forbidden = {
+        'preliminary_regime', 'suggested_strategy', 'quantitative_assessment',
+        'quantitative_agreement', 'backend_strategy_ranking',
+        'preliminary_selection_rationale',
+    }
+
+    def contains(value):
+        if isinstance(value, dict):
+            return any(key in forbidden or contains(item) for key, item in value.items())
+        if isinstance(value, list):
+            return any(contains(item) for item in value)
+        return False
+
+    return contains(llm_context)
+
+
 __all__ = [
-    'AGENT_UNIFIED_CONTEXT_VERSION',
+    'AGENT_UNIFIED_CONTEXT_VERSION', 'LLM_STRATEGY_CONTEXT_VERSION',
+    'backend_suggestion_exposed_to_llm', 'build_llm_strategy_context',
     'build_unified_agent_context',
 ]
