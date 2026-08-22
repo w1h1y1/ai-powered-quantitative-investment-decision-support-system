@@ -1,4 +1,4 @@
-"""Unified deterministic context for the future AI Agent.
+"""Unified deterministic evidence and preliminary assessment for the AI Agent.
 
 This module assembles one structured snapshot from existing Django services.
 It never recalculates regime, never replaces indicator formulas, and never
@@ -26,10 +26,18 @@ from market.regime_config import (
 )
 from market.regime_service import ensure_benchmark_security, get_market_regime
 from market.services import subtract_years
+from market.strategy_catalog import (
+    AGENT_STRATEGY_IDS,
+    STRATEGY_NO_STRATEGY,
+    STRATEGY_RISK_OFF,
+    get_agent_strategy_catalog,
+    get_related_backtest_strategy,
+)
+from market.strategy_selection_service import select_strategy
 from portfolio.services import get_portfolio_summary
 
 
-AGENT_UNIFIED_CONTEXT_VERSION = 'agent_context_v1'
+AGENT_UNIFIED_CONTEXT_VERSION = 'agent_context_v2'
 
 REGIME_DIRECTION_LABELS = {
     'bullish_trend': 'Bullish',
@@ -180,6 +188,7 @@ def _technical_payload(security, market_regime_result):
     trend = market_regime_result.get('trend') or {}
     momentum = market_regime_result.get('momentum') or {}
     volatility = market_regime_result.get('volatility') or {}
+    relative_strength = market_regime_result.get('relative_strength') or {}
 
     return {
         'available': True,
@@ -205,6 +214,13 @@ def _technical_payload(security, market_regime_result):
         },
         'volatility': {
             'atr': _number(volatility.get('atr'), 4),
+        },
+        'relative_performance': {
+            'vs_spy_20d': _number(relative_strength.get('vs_spy_20d'), 6),
+            'vs_spy_60d': _number(relative_strength.get('vs_spy_60d'), 6),
+            'vs_sector_20d': _number(relative_strength.get('vs_sector_20d'), 6),
+            'vs_sector_60d': _number(relative_strength.get('vs_sector_60d'), 6),
+            'score': _number(relative_strength.get('score'), 6),
         },
     }
 
@@ -389,8 +405,171 @@ def _data_quality_payload(
     }
 
 
+def _quantitative_assessment_payload(market_regime, strategy_selection):
+    return {
+        'available': (
+            market_regime.get('available') is True
+            and strategy_selection.get('strategy_selection_available') is True
+        ),
+        'preliminary_regime': market_regime.get('regime'),
+        'suggested_strategy': strategy_selection.get('selected_strategy'),
+        'confidence': market_regime.get('confidence_score'),
+        'confidence_label': market_regime.get('confidence'),
+        'risk_off': strategy_selection.get('risk_off') is True,
+        'allow_new_long': strategy_selection.get('allow_new_long') is True,
+        'explanation': (
+            _strings(market_regime.get('explanation'))
+            + _strings(strategy_selection.get('reason'))
+        ),
+    }
+
+
+def _hard_constraints_payload(strategy_selection, portfolio_context):
+    allow_new_long = strategy_selection.get('allow_new_long') is True
+    current_allowed = (
+        list(AGENT_STRATEGY_IDS)
+        if allow_new_long
+        else [STRATEGY_RISK_OFF, STRATEGY_NO_STRATEGY]
+    )
+    active_strategy_ids = [
+        definition['id']
+        for definition in get_agent_strategy_catalog()
+        if definition.get('executable') is True
+    ]
+    return {
+        'allowed_strategies': list(AGENT_STRATEGY_IDS),
+        'currently_allowed_strategies': current_allowed,
+        'active_strategy_ids': active_strategy_ids,
+        'execution_mode': strategy_selection.get('execution_mode') or 'long_only',
+        'allow_new_long': allow_new_long,
+        'risk_off': strategy_selection.get('risk_off') is True,
+        'actual_trading_allowed': False,
+        'portfolio_data_available': portfolio_context.get('available') is True,
+    }
+
+
+def _strategy_evidence_payload(backtest_context):
+    """Describe comparison evidence without running two new strategy backtests."""
+
+    unavailable_reason = 'strategy_specific_comparison_not_available'
+    candidates = {}
+    unavailable_reasons = {
+        'defensive_state': 'defensive_state_not_backtestable',
+        'abstention_state': 'abstention_state_not_backtestable',
+    }
+    for definition in get_agent_strategy_catalog():
+        candidate_reason = (
+            unavailable_reason
+            if definition.get('backtest_available') is True
+            else unavailable_reasons.get(
+                definition.get('kind'), 'strategy_not_backtestable',
+            )
+        )
+        candidates[definition['id']] = {
+            'backtest_capability_available': definition.get('backtest_available') is True,
+            'evidence_available': False,
+            'unavailable_reason': candidate_reason,
+            'total_return': None,
+            'max_drawdown': None,
+            'win_rate': None,
+            'trade_count': None,
+        }
+    return {
+        'backtest_evidence_available': False,
+        'comparable_candidate_backtests_available': False,
+        'comparison_unavailable_reason': unavailable_reason,
+        'candidates': candidates,
+        'related_hybrid_backtest': {
+            **backtest_context,
+            'comparable_for_candidate_selection': False,
+            'comparison_note': (
+                'This Core + Swing result is not a same-logic comparison '
+                'between the independent Trend Following and Mean Reversion evaluators.'
+            ),
+        },
+    }
+
+
+def _available_strategies_payload(hard_constraints):
+    currently_allowed = set(hard_constraints.get('currently_allowed_strategies') or [])
+    return [
+        {
+            **definition,
+            'currently_allowed': definition['id'] in currently_allowed,
+        }
+        for definition in get_agent_strategy_catalog()
+    ]
+
+
+def _evidence_catalog(
+    *,
+    market_data,
+    technical_analysis,
+    market_regime,
+    market_context,
+    quantitative_assessment,
+    backtest_context,
+):
+    """Return the only factor/value pairs an LLM may cite numerically."""
+
+    moving_averages = technical_analysis.get('moving_averages') or {}
+    momentum = technical_analysis.get('momentum') or {}
+    trend = technical_analysis.get('trend') or {}
+    technical_volatility = technical_analysis.get('volatility') or {}
+    relative = technical_analysis.get('relative_performance') or {}
+    regime_volatility = market_regime.get('volatility') or {}
+    confirmation = market_context.get('confirmation') or {}
+    candidates = (
+        ('Latest Price', market_data.get('latest_close'), 'market_data.latest_close'),
+        ('Price Change', market_data.get('open_to_close_change'), 'market_data.open_to_close_change'),
+        ('Price Change Percent', market_data.get('open_to_close_change_percent'), 'market_data.open_to_close_change_percent'),
+        ('MA20', moving_averages.get('ma20'), 'technical_analysis.moving_averages.ma20'),
+        ('MA60', moving_averages.get('ma60'), 'technical_analysis.moving_averages.ma60'),
+        ('MA200', moving_averages.get('ma200'), 'technical_analysis.moving_averages.ma200'),
+        ('RSI', momentum.get('rsi'), 'technical_analysis.momentum.rsi'),
+        ('MACD', momentum.get('macd'), 'technical_analysis.momentum.macd'),
+        ('MACD Signal', momentum.get('macd_signal'), 'technical_analysis.momentum.macd_signal'),
+        ('MACD Histogram', momentum.get('macd_histogram'), 'technical_analysis.momentum.macd_histogram'),
+        ('ADX', trend.get('adx'), 'technical_analysis.trend.adx'),
+        ('Choppiness Index', market_regime.get('choppiness'), 'market_regime.choppiness'),
+        ('ATR', technical_volatility.get('atr'), 'technical_analysis.volatility.atr'),
+        ('ATR Percent', regime_volatility.get('atr_percent'), 'market_regime.volatility.atr_percent'),
+        ('Realized Volatility 20D', regime_volatility.get('realized_volatility_20d'), 'market_regime.volatility.realized_volatility_20d'),
+        ('Volatility Percentile', regime_volatility.get('volatility_percentile'), 'market_regime.volatility.volatility_percentile'),
+        ('Relative to SPY 20D', relative.get('vs_spy_20d'), 'technical_analysis.relative_performance.vs_spy_20d'),
+        ('Relative to SPY 60D', relative.get('vs_spy_60d'), 'technical_analysis.relative_performance.vs_spy_60d'),
+        ('Relative to Sector 20D', relative.get('vs_sector_20d'), 'technical_analysis.relative_performance.vs_sector_20d'),
+        ('Relative to Sector 60D', relative.get('vs_sector_60d'), 'technical_analysis.relative_performance.vs_sector_60d'),
+        ('Market Confirmation Score', confirmation.get('score'), 'market_context.confirmation.score'),
+        ('Preliminary Regime', quantitative_assessment.get('preliminary_regime'), 'quantitative_assessment.preliminary_regime'),
+        ('Suggested Strategy', quantitative_assessment.get('suggested_strategy'), 'quantitative_assessment.suggested_strategy'),
+        ('Risk Off', quantitative_assessment.get('risk_off'), 'quantitative_assessment.risk_off'),
+        ('Allow New Long', quantitative_assessment.get('allow_new_long'), 'quantitative_assessment.allow_new_long'),
+    )
+    catalog = [
+        {'factor': factor, 'value': value, 'source_path': source_path}
+        for factor, value, source_path in candidates
+        if value is not None
+    ]
+    if backtest_context.get('available') is True:
+        for factor, field in (
+            ('Hybrid Backtest Total Return', 'total_return'),
+            ('Hybrid Backtest Max Drawdown', 'max_drawdown'),
+            ('Hybrid Backtest Win Rate', 'win_rate'),
+            ('Hybrid Backtest Trade Count', 'trade_count'),
+        ):
+            value = backtest_context.get(field)
+            if value is not None:
+                catalog.append({
+                    'factor': factor,
+                    'value': value,
+                    'source_path': f'backtest_context.{field}',
+                })
+    return catalog
+
+
 def build_unified_agent_context(security, user, *, benchmark=None):
-    """Assemble one structured Agent Context for a security and user."""
+    """Assemble evidence, preliminary judgment, and hard constraints."""
 
     benchmark_security = benchmark
     if benchmark_security is None:
@@ -402,6 +581,7 @@ def build_unified_agent_context(security, user, *, benchmark=None):
     market_regime = _market_regime_payload(market_regime_result)
     market_context = _market_context_payload(market_regime_result)
     portfolio_context = _portfolio_payload(user, security)
+    strategy_selection = select_strategy(market_regime_result)
     as_of_date = (
         market_regime_result.get('latest_market_date')
         or market_data.get('latest_market_date')
@@ -410,6 +590,14 @@ def build_unified_agent_context(security, user, *, benchmark=None):
         security,
         benchmark_security,
         as_of_date,
+    )
+    quantitative_assessment = _quantitative_assessment_payload(
+        market_regime,
+        strategy_selection,
+    )
+    hard_constraints = _hard_constraints_payload(
+        strategy_selection,
+        portfolio_context,
     )
     return {
         'symbol': security.symbol,
@@ -422,6 +610,19 @@ def build_unified_agent_context(security, user, *, benchmark=None):
         'market_context': market_context,
         'portfolio_context': portfolio_context,
         'backtest_context': backtest_context,
+        'quantitative_assessment': quantitative_assessment,
+        'hard_constraints': hard_constraints,
+        'available_strategies': _available_strategies_payload(hard_constraints),
+        'related_backtest_strategy': get_related_backtest_strategy(),
+        'strategy_evidence': _strategy_evidence_payload(backtest_context),
+        'evidence_catalog': _evidence_catalog(
+            market_data=market_data,
+            technical_analysis=technical_analysis,
+            market_regime=market_regime,
+            market_context=market_context,
+            quantitative_assessment=quantitative_assessment,
+            backtest_context=backtest_context,
+        ),
         'data_quality': _data_quality_payload(
             market_data=market_data,
             technical_analysis=technical_analysis,

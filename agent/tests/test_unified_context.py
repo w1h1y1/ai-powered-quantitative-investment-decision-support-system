@@ -27,6 +27,12 @@ TOP_LEVEL_KEYS = (
     'market_context',
     'portfolio_context',
     'backtest_context',
+    'quantitative_assessment',
+    'hard_constraints',
+    'available_strategies',
+    'related_backtest_strategy',
+    'strategy_evidence',
+    'evidence_catalog',
     'data_quality',
 )
 
@@ -54,6 +60,13 @@ def regime_result(
             'realized_volatility_20d': 0.25,
             'volatility_percentile': 0.55,
             'percentile_available': True,
+        },
+        'relative_strength': {
+            'score': 0.12,
+            'vs_spy_20d': 0.03,
+            'vs_spy_60d': 0.04,
+            'vs_sector_20d': 0.01,
+            'vs_sector_60d': 0.02,
         },
         'market_context': {
             'broad_market': 'SPY',
@@ -166,6 +179,20 @@ class UnifiedAgentContextServiceTests(TestCase):
         self.assertTrue(context['market_data']['available'])
         self.assertTrue(context['technical_analysis']['available'])
         self.assertIsNotNone(context['technical_analysis']['moving_averages']['ma20'])
+        self.assertEqual(context['technical_analysis']['relative_performance']['vs_spy_20d'], 0.03)
+        self.assertEqual(context['quantitative_assessment']['preliminary_regime'], 'sideways_range')
+        self.assertEqual(context['quantitative_assessment']['suggested_strategy'], 'mean_reversion')
+        self.assertTrue(context['hard_constraints']['allow_new_long'])
+        self.assertFalse(context['strategy_evidence']['backtest_evidence_available'])
+        self.assertFalse(context['strategy_evidence']['candidates']['trend_following']['evidence_available'])
+        self.assertTrue(context['strategy_evidence']['related_hybrid_backtest']['available'])
+        self.assertFalse(
+            context['strategy_evidence']['related_hybrid_backtest']['comparable_for_candidate_selection']
+        )
+        self.assertEqual(
+            [item['id'] for item in context['available_strategies']],
+            ['trend_following', 'mean_reversion', 'risk_off', 'no_strategy'],
+        )
 
     def test_market_regime_reuses_regime_service_result(self):
         self.seed_prices(self.securities['AAPL'])
@@ -259,6 +286,35 @@ class UnifiedAgentContextServiceTests(TestCase):
         self.assertEqual(context['backtest_context']['benchmark'], 'SPY')
         self.assertEqual(context['backtest_context']['trade_count'], 3)
         self.assertTrue(context['data_quality']['backtest_context_available'])
+
+    def test_context_does_not_run_duplicate_candidate_backtests(self):
+        self.seed_prices(self.securities['AAPL'])
+        with (
+            patch('agent.unified_context_service.get_market_regime', return_value=regime_result()),
+            patch(
+                'agent.unified_context_service.get_portfolio_summary',
+                return_value=no_position_summary(),
+            ),
+            patch(
+                'agent.unified_context_service.run_market_regime_core_swing_backtest',
+                return_value=hybrid_backtest_result(),
+            ) as hybrid,
+            patch(
+                'backtest.strategy_evaluation_service.evaluate_trend_following',
+            ) as trend,
+            patch(
+                'backtest.strategy_evaluation_service.evaluate_mean_reversion',
+            ) as mean_reversion,
+        ):
+            from agent.unified_context_service import build_unified_agent_context
+            context = build_unified_agent_context(
+                self.securities['AAPL'], self.user, benchmark=self.benchmark,
+            )
+
+        hybrid.assert_called_once()
+        trend.assert_not_called()
+        mean_reversion.assert_not_called()
+        self.assertFalse(context['strategy_evidence']['backtest_evidence_available'])
 
     def test_risk_off_regime_does_not_mark_backtest_not_applicable(self):
         self.seed_prices(self.securities['AAPL'])

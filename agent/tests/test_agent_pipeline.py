@@ -25,23 +25,53 @@ from agent.unified_context_service import (
 )
 
 
-def valid_analysis():
+def valid_analysis(regime='high_volatility', strategy='risk_off'):
+    active_allowed = regime != 'high_volatility'
+    comparison = {}
+    for candidate in ('trend_following', 'mean_reversion', 'risk_off', 'no_strategy'):
+        if not active_allowed and candidate in ('trend_following', 'mean_reversion'):
+            suitability = 'not_allowed'
+        elif candidate == strategy:
+            suitability = 'high'
+        else:
+            suitability = 'low'
+        comparison[candidate] = {
+            'suitability': suitability,
+            'supporting_factors': [],
+            'conflicting_factors': [],
+        }
     return {
-        'market_view': {'summary': 'Elevated volatility with mixed direction.'},
-        'technical_view': {'trend': 'Mixed', 'momentum': 'Weak', 'volatility': 'Elevated'},
-        'market_context_view': {
-            'broad_market': 'SPY is sideways.',
-            'sector': 'Sector is sideways.',
-            'confirmation': 'Neutral confirmation.',
+        'final_market_assessment': {
+            'regime': regime,
+            'direction': 'mixed' if regime == 'high_volatility' else 'neutral',
+            'confidence': 0.61,
+            'summary': 'The supplied indicators support the final assessment.',
         },
-        'portfolio_view': {'exposure_comment': 'The portfolio holds AAPL.'},
-        'backtest_view': {
-            'summary': 'Positive historical return with drawdown risk.',
-            'strengths': ['Positive return'],
-            'risks': ['Drawdown risk'],
+        'strategy_comparison': comparison,
+        'final_strategy_assessment': {
+            'selected_strategy': strategy,
+            'confidence': 0.61,
+            'suitability': 'high',
+            'reason': 'The selected strategy best matches the supplied evidence.',
+            'why_not_alternatives': [
+                f'{candidate} ranks below the selected strategy.'
+                for candidate in comparison if candidate != strategy
+            ],
         },
-        'overall_assessment': 'Elevated volatility dominates.',
-        'risk_factors': ['High volatility'],
+        'quantitative_agreement': {'agrees_with_backend': True, 'differences': []},
+        'risk_assessment': {
+            'risk_level': 'high' if regime == 'high_volatility' else 'medium',
+            'risk_off': regime == 'high_volatility',
+            'allow_new_long': regime != 'high_volatility',
+            'summary': 'Backend hard constraints remain authoritative.',
+        },
+        'backtest_evidence_available': False,
+        'supporting_evidence': [{
+            'factor': 'Suggested Strategy',
+            'value': strategy,
+            'interpretation': 'The deterministic suggestion is one supplied comparison input.',
+        }],
+        'limitations': ['Strategy-specific comparison backtests are unavailable.'],
     }
 
 
@@ -228,7 +258,7 @@ class AgentPipelineIntegrationTests(TestCase):
 
     def test_aapl_to_jpm_pipeline_has_no_context_leakage(self):
         aapl_provider = FakeProvider(analysis=valid_analysis())
-        jpm_provider = FakeProvider(analysis=valid_analysis())
+        jpm_provider = FakeProvider(analysis=valid_analysis('sideways_range', 'mean_reversion'))
 
         patch_regime, patch_backtest, patch_portfolio = self.patch_context_dependencies('AAPL')
         with patch_regime, patch_backtest, patch_portfolio:
@@ -262,13 +292,19 @@ class AgentPipelineIntegrationTests(TestCase):
         self.assertNotIn('Apple', jpm_provider.last_prompt['user'])
         self.assertIn('Financials', jpm_provider.last_prompt['user'])
 
-    def test_llm_cannot_override_django_controlled_facts(self):
-        conflicting_analysis = valid_analysis()
-        conflicting_analysis['market_view']['regime'] = 'bullish_trend'
-        conflicting_analysis['market_view']['direction'] = 'Bullish'
-        conflicting_analysis['portfolio_view']['has_position'] = False
-        conflicting_analysis['backtest_view']['available'] = False
-        conflicting_analysis['symbol'] = 'TSLA'
+    def test_llm_judgment_cannot_override_django_risk_constraints(self):
+        conflicting_analysis = valid_analysis('sideways_range', 'mean_reversion')
+        conflicting_analysis['quantitative_agreement'] = {
+            'agrees_with_backend': False,
+            'differences': ['Final regime and strategy differ from the preliminary assessment.'],
+        }
+        conflicting_analysis['risk_assessment']['risk_off'] = False
+        conflicting_analysis['risk_assessment']['allow_new_long'] = True
+        conflicting_analysis['supporting_evidence'] = [{
+            'factor': 'ADX',
+            'value': 22.21,
+            'interpretation': 'Trend strength contributes to the independent comparison.',
+        }]
         provider = FakeProvider(analysis=conflicting_analysis)
 
         patch_regime, patch_backtest, patch_portfolio = self.patch_context_dependencies('AAPL')
@@ -279,9 +315,11 @@ class AgentPipelineIntegrationTests(TestCase):
                 provider=provider,
             )
 
-        self.assertEqual(response['analysis_status'], 'success')
+        self.assertEqual(response['analysis_status'], 'fallback')
         self.assertEqual(response['symbol'], 'AAPL')
-        self.assertEqual(response['analysis']['market_view']['regime'], 'high_volatility')
-        self.assertEqual(response['analysis']['market_view']['direction'], 'Mixed')
-        self.assertTrue(response['analysis']['portfolio_view']['has_position'])
-        self.assertTrue(response['analysis']['backtest_view']['available'])
+        self.assertEqual(
+            response['analysis']['final_strategy_assessment']['selected_strategy'],
+            'risk_off',
+        )
+        self.assertFalse(response['analysis']['risk_assessment']['allow_new_long'])
+        self.assertTrue(response['analysis']['risk_assessment']['risk_off'])

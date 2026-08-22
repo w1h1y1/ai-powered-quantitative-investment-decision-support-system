@@ -1,52 +1,107 @@
-"""Structured schema for AG-02 agent analysis."""
+"""Validated quantitative-comparison + LLM-synthesis schema."""
 
 import json
+import math
+import re
 
-AGENT_ANALYSIS_VERSION = 'agent_analysis_v1'
-AGENT_ANALYSIS_PROMPT_VERSION = 'agent_analysis_prompt_v1'
+from market.regime_config import (
+    REGIME_BEARISH,
+    REGIME_BULLISH,
+    REGIME_HIGH_VOLATILITY,
+    REGIME_SIDEWAYS,
+)
+from market.strategy_catalog import (
+    AGENT_STRATEGY_IDS,
+    STRATEGY_MEAN_REVERSION,
+    STRATEGY_NO_STRATEGY,
+    STRATEGY_RISK_OFF,
+    STRATEGY_TREND_FOLLOWING,
+)
+
+
+AGENT_ANALYSIS_VERSION = 'investment_agent_analysis_v3'
+AGENT_ANALYSIS_PROMPT_VERSION = 'investment_agent_analysis_prompt_v3'
+
+ALLOWED_REGIMES = {
+    REGIME_BEARISH,
+    REGIME_BULLISH,
+    REGIME_HIGH_VOLATILITY,
+    REGIME_SIDEWAYS,
+}
+ALLOWED_DIRECTIONS = {'bullish', 'bearish', 'neutral', 'mixed'}
+ALLOWED_CANDIDATE_SUITABILITY = {
+    'high', 'medium', 'low', 'not_allowed', 'insufficient_evidence',
+}
+ALLOWED_RISK_LEVELS = {'low', 'medium', 'high'}
+ACTIVE_STRATEGIES = {STRATEGY_TREND_FOLLOWING, STRATEGY_MEAN_REVERSION}
+TOP_LEVEL_FIELDS = {
+    'final_market_assessment', 'strategy_comparison',
+    'final_strategy_assessment', 'quantitative_agreement',
+    'risk_assessment', 'backtest_evidence_available',
+    'supporting_evidence', 'limitations',
+}
+NUMBER_PATTERN = re.compile(r'(?<![A-Za-z0-9_])[-+]?\d+(?:\.\d+)?(?![A-Za-z0-9_])')
 
 FORBIDDEN_ACTION_PHRASES = (
-    'initiate a position',
-    'enter a position',
-    'add exposure',
-    'increase exposure',
-    'reduce exposure',
-    'exit the position',
-    'take profit',
-    'buy the dip',
-    'consider buying',
-    'consider selling',
-    'could enter',
-    'capacity to enter',
-    'room to add',
-    'opportunity to buy',
-    'ample capacity',
+    'initiate a position', 'enter a position', 'add exposure',
+    'increase exposure', 'reduce exposure', 'exit the position',
+    'take profit', 'buy the dip', 'consider buying', 'consider selling',
+    'could enter', 'capacity to enter', 'room to add',
+    'opportunity to buy', 'ample capacity',
 )
 
 
 class UnifiedAnalysisValidationError(ValueError):
-    """Raised when the provider output does not match the analysis schema."""
+    """Raised when provider output is unsafe or does not match v3."""
+
+    def __init__(self, message, *, reason_code='llm_schema_validation_failed'):
+        super().__init__(message)
+        self.reason_code = reason_code
 
 
-def _string(value):
+def _string(value, field_name):
     if isinstance(value, str) and value.strip():
         return value.strip()
-    raise UnifiedAnalysisValidationError('expected a non-empty string')
+    raise UnifiedAnalysisValidationError(f'{field_name} must be a non-empty string')
 
 
-def _string_list(value):
-    if value is None:
-        return []
+def _string_list(value, field_name):
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise UnifiedAnalysisValidationError('expected a list of strings')
+        raise UnifiedAnalysisValidationError(f'{field_name} must be an array of strings')
     return [item.strip() for item in value if item.strip()]
 
 
 def _section(data, field_name):
-    section = data.get(field_name)
-    if not isinstance(section, dict):
+    value = data.get(field_name)
+    if not isinstance(value, dict):
         raise UnifiedAnalysisValidationError(f'missing required field: {field_name}')
-    return section
+    return value
+
+
+def _require_exact_fields(value, expected, field_name):
+    if set(value) != set(expected):
+        raise UnifiedAnalysisValidationError(f'{field_name} has missing or extra fields')
+
+
+def _enum(value, allowed, field_name):
+    if value not in allowed:
+        raise UnifiedAnalysisValidationError(f'{field_name} has an unsupported value')
+    return value
+
+
+def _boolean(value, field_name):
+    if not isinstance(value, bool):
+        raise UnifiedAnalysisValidationError(f'{field_name} must be a boolean')
+    return value
+
+
+def _confidence(value, field_name):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise UnifiedAnalysisValidationError(f'{field_name} must be numeric')
+    number = float(value)
+    if not math.isfinite(number) or number < 0 or number > 1:
+        raise UnifiedAnalysisValidationError(f'{field_name} must be between 0 and 1')
+    return round(number, 6)
 
 
 def _has_forbidden_text(value):
@@ -70,258 +125,450 @@ def has_open_close_direction_contradiction(analysis, context):
         return False
     text = json.dumps(analysis).lower()
     if direction == 'Down':
-        forbidden = (
-            'closed higher',
-            'up from the open',
-            'rose from the open',
-            'closed above the open',
-        )
+        forbidden = ('closed higher', 'up from the open', 'rose from the open', 'closed above the open')
     elif direction == 'Up':
-        forbidden = (
-            'closed lower',
-            'down from the open',
-            'fell from the open',
-            'closed below the open',
-        )
+        forbidden = ('closed lower', 'down from the open', 'fell from the open', 'closed below the open')
     else:
-        forbidden = (
-            'closed higher',
-            'closed lower',
-            'up from the open',
-            'down from the open',
-        )
+        forbidden = ('closed higher', 'closed lower', 'up from the open', 'down from the open')
     return any(phrase in text for phrase in forbidden)
 
 
-def _as_float(value):
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+def _same_value(actual, expected):
+    if isinstance(expected, bool) or isinstance(actual, bool):
+        return type(actual) is type(expected) and actual == expected
+    if isinstance(expected, (int, float)) and isinstance(actual, (int, float)):
+        return math.isclose(float(actual), float(expected), rel_tol=1e-9, abs_tol=1e-9)
+    return actual == expected
 
 
-def _decision_stance(direction, price_vs_ma20, macd_histogram, regime):
-    if regime == 'high_volatility':
-        if direction == 'Bullish' and (price_vs_ma20 or 0) > 0 and (macd_histogram or 0) > 0:
-            return 'Cautious Bullish'
-        return 'Cautious'
-    if direction == 'Bullish':
-        if (price_vs_ma20 or 0) > 0 and (macd_histogram or 0) > 0:
-            return 'Bullish'
-        return 'Cautious Bullish'
-    if direction == 'Bearish':
-        return 'Bearish'
-    if regime == 'sideways_range':
-        return 'Neutral'
-    return 'Neutral'
+def _normalize_evidence(value, context, *, field_name, allow_empty):
+    if not isinstance(value, list) or (not allow_empty and not value):
+        qualifier = 'an array' if allow_empty else 'a non-empty array'
+        raise UnifiedAnalysisValidationError(f'{field_name} must be {qualifier}')
+    catalog = {
+        item.get('factor'): item.get('value')
+        for item in (context.get('evidence_catalog') or [])
+        if isinstance(item, dict) and isinstance(item.get('factor'), str)
+    }
+    normalized = []
+    for index, item in enumerate(value):
+        item_name = f'{field_name}[{index}]'
+        if not isinstance(item, dict):
+            raise UnifiedAnalysisValidationError(f'{item_name} must be an object')
+        _require_exact_fields(item, {'factor', 'value', 'interpretation'}, item_name)
+        factor = _string(item.get('factor'), f'{item_name}.factor')
+        if factor not in catalog:
+            raise UnifiedAnalysisValidationError(
+                f'{item_name} references an unavailable factor',
+                reason_code='llm_evidence_validation_failed',
+            )
+        evidence_value = item.get('value')
+        if not _same_value(evidence_value, catalog[factor]):
+            raise UnifiedAnalysisValidationError(
+                f'{item_name} value does not match context',
+                reason_code='llm_evidence_validation_failed',
+            )
+        normalized.append({
+            'factor': factor,
+            'value': evidence_value,
+            'interpretation': _string(item.get('interpretation'), f'{item_name}.interpretation'),
+        })
+    return normalized
 
 
-def _decision_confidence(context, analysis):
-    market_regime = context.get('market_regime') or {}
-    technical = context.get('technical_analysis') or {}
-    market_context = context.get('market_context') or {}
-    backtest = context.get('backtest_context') or {}
-    confirmation = market_context.get('confirmation') or {}
-    volatility = market_regime.get('volatility') or {}
-    available_sources = sum([
-        market_regime.get('available') is True,
-        technical.get('available') is True,
-        backtest.get('available') is True,
-        (market_context.get('broad_market') or {}).get('available') is True,
-    ])
-    percentile = _as_float(volatility.get('volatility_percentile'))
-    if confirmation.get('level') == 'Weak' or available_sources < 2:
-        return 'Low'
-    if percentile is not None and percentile >= 0.85:
-        return 'Medium'
-    if confirmation.get('level') == 'Strong' and available_sources >= 3:
-        return 'High'
-    return 'Medium'
+def _candidate_ids(context):
+    ids = [
+        item.get('id') for item in (context.get('available_strategies') or [])
+        if isinstance(item, dict) and item.get('id') in AGENT_STRATEGY_IDS
+    ]
+    return ids or list(AGENT_STRATEGY_IDS)
 
 
-def _decision_key_reasons(context, analysis):
-    regime = (context.get('market_regime') or {}).get('regime')
-    direction = (context.get('market_regime') or {}).get('direction')
-    technical = context.get('technical_analysis') or {}
-    moving_averages = technical.get('moving_averages') or {}
-    momentum = technical.get('momentum') or {}
-    backtest = context.get('backtest_context') or {}
-    portfolio = context.get('portfolio_context') or {}
-    market_context = context.get('market_context') or {}
-    broad = market_context.get('broad_market') or {}
-    sector = market_context.get('sector') or {}
-    reasons = []
+def _currently_allowed_ids(context, candidate_ids):
+    constraints = context.get('hard_constraints') or {}
+    configured = constraints.get('currently_allowed_strategies')
+    if isinstance(configured, list):
+        return {item for item in configured if item in candidate_ids}
+    if constraints.get('allow_new_long') is True:
+        return set(candidate_ids)
+    return {STRATEGY_RISK_OFF, STRATEGY_NO_STRATEGY} & set(candidate_ids)
 
-    price_vs_ma20 = _as_float(moving_averages.get('price_vs_ma20'))
-    if price_vs_ma20 is not None:
-        if price_vs_ma20 > 0.001:
-            reasons.append('Price is above MA20.')
-        elif price_vs_ma20 < -0.001:
-            reasons.append('Price is below MA20.')
-        else:
-            reasons.append('Price is near MA20.')
 
-    rsi = _as_float(momentum.get('rsi'))
-    if rsi is not None:
-        if rsi >= 70:
-            reasons.append(f'RSI is overbought at {rsi:.1f}.')
-        elif rsi <= 30:
-            reasons.append(f'RSI is oversold at {rsi:.1f}.')
-        else:
-            reasons.append(f'RSI is neutral at {rsi:.1f}.')
-
-    macd_histogram = _as_float(momentum.get('macd_histogram'))
-    if macd_histogram is not None:
-        if macd_histogram > 0:
-            reasons.append('MACD momentum is positive.')
-        elif macd_histogram < 0:
-            reasons.append('MACD momentum is negative.')
-        else:
-            reasons.append('MACD momentum is flat.')
-
-    if direction:
-        reasons.append(f'Trend direction is {direction}.')
-
-    broad_symbol = broad.get('symbol') or 'SPY'
-    if broad.get('available') is True:
-        broad_state = broad.get('regime') or broad.get('direction') or 'unavailable'
-        reasons.append(f'Broad market {broad_symbol} is {broad_state}.')
-
-    sector_benchmark = sector.get('benchmark')
-    if sector.get('available') is True and sector_benchmark:
-        sector_state = sector.get('regime') or sector.get('direction') or 'unavailable'
-        reasons.append(f'Sector {sector_benchmark} is {sector_state}.')
-
-    if backtest.get('available') is True:
-        reasons.append(
-            f'Historical backtest evidence is available with '
-            f"{backtest.get('trade_count', 0)} trades."
+def _normalize_strategy_comparison(value, context, candidate_ids):
+    if not isinstance(value, dict) or set(value) != set(candidate_ids):
+        raise UnifiedAnalysisValidationError(
+            'strategy_comparison must contain every available strategy exactly once'
         )
+    normalized = {}
+    currently_allowed = _currently_allowed_ids(context, candidate_ids)
+    for strategy_id in candidate_ids:
+        item = value.get(strategy_id)
+        field_name = f'strategy_comparison.{strategy_id}'
+        if not isinstance(item, dict):
+            raise UnifiedAnalysisValidationError(f'{field_name} must be an object')
+        _require_exact_fields(
+            item,
+            {'suitability', 'supporting_factors', 'conflicting_factors'},
+            field_name,
+        )
+        supporting = _normalize_evidence(
+            item.get('supporting_factors'), context,
+            field_name=f'{field_name}.supporting_factors', allow_empty=True,
+        )
+        conflicting = _normalize_evidence(
+            item.get('conflicting_factors'), context,
+            field_name=f'{field_name}.conflicting_factors', allow_empty=True,
+        )
+        if any(
+            evidence['factor'].startswith('Hybrid Backtest')
+            for evidence in supporting + conflicting
+        ):
+            raise UnifiedAnalysisValidationError(
+                'the related hybrid backtest is not candidate-comparison evidence',
+                reason_code='llm_evidence_validation_failed',
+            )
+        suitability = _enum(
+                item.get('suitability'), ALLOWED_CANDIDATE_SUITABILITY,
+                f'{field_name}.suitability',
+            )
+        if strategy_id not in currently_allowed and suitability != 'not_allowed':
+            raise UnifiedAnalysisValidationError(
+                f'{field_name}.suitability must be not_allowed under current constraints'
+            )
+        if strategy_id in currently_allowed and suitability == 'not_allowed':
+            raise UnifiedAnalysisValidationError(
+                f'{field_name}.suitability contradicts current permissions'
+            )
+        normalized[strategy_id] = {
+            'suitability': suitability,
+            'supporting_factors': supporting,
+            'conflicting_factors': conflicting,
+        }
+    return normalized
 
-    if portfolio.get('has_position') is True:
-        reasons.append('The portfolio currently holds this security.')
-    elif portfolio.get('available') is True:
-        reasons.append('The portfolio has no current position in this security.')
 
-    return reasons[:5]
-
-
-def _decision_main_risk(context, analysis):
-    volatility = (context.get('market_regime') or {}).get('volatility') or {}
-    percentile = _as_float(volatility.get('volatility_percentile'))
-    if percentile is not None and percentile >= 0.85:
-        return 'High volatility is the main current risk.'
-
-    technical = context.get('technical_analysis') or {}
-    moving_averages = technical.get('moving_averages') or {}
-    momentum = technical.get('momentum') or {}
-    price_vs_ma20 = _as_float(moving_averages.get('price_vs_ma20'))
-    macd_histogram = _as_float(momentum.get('macd_histogram'))
-    if price_vs_ma20 is not None and price_vs_ma20 < 0 and (macd_histogram or 0) < 0:
-        return 'Price is below MA20 with negative momentum.'
-
-    risk_factors = analysis.get('risk_factors') or []
-    if risk_factors:
-        return risk_factors[0]
-    return 'Mixed evidence with limited confirmation.'
+def _context_numbers(value):
+    numbers = []
+    if isinstance(value, bool):
+        return numbers
+    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        numbers.append(float(value))
+    elif isinstance(value, dict):
+        for item in value.values():
+            numbers.extend(_context_numbers(item))
+    elif isinstance(value, list):
+        for item in value:
+            numbers.extend(_context_numbers(item))
+    return numbers
 
 
-def build_decision_summary(context, analysis):
-    market_regime = context.get('market_regime') or {}
-    technical = context.get('technical_analysis') or {}
-    moving_averages = technical.get('moving_averages') or {}
-    momentum = technical.get('momentum') or {}
-    backtest = context.get('backtest_context') or {}
-    market_context = context.get('market_context') or {}
-    confirmation = market_context.get('confirmation') or {}
-    regime = market_regime.get('regime')
-    direction = market_regime.get('direction')
-    price_vs_ma20 = _as_float(moving_averages.get('price_vs_ma20'))
-    macd_histogram = _as_float(momentum.get('macd_histogram'))
-    stance = _decision_stance(direction, price_vs_ma20, macd_histogram, regime)
-    confidence = _decision_confidence(context, analysis)
-    suggested_approach = 'Wait for Confirmation'
-    suitable_strategy = 'Swing'
+def _validate_narrative_numbers(strings, context, extra_allowed):
+    allowed = _context_numbers(context) + [float(item) for item in extra_allowed]
+    for narrative in strings:
+        if not isinstance(narrative, str):
+            continue
+        for match in NUMBER_PATTERN.findall(narrative):
+            number = float(match)
+            if not any(math.isclose(number, item, rel_tol=1e-9, abs_tol=1e-9) for item in allowed):
+                raise UnifiedAnalysisValidationError(
+                    'narrative contains a numeric value absent from context',
+                    reason_code='llm_evidence_validation_failed',
+                )
 
-    if regime == 'high_volatility':
-        suggested_approach = 'Wait for Confirmation'
-        suitable_strategy = 'Reduced Exposure / Wait'
-    elif regime == 'sideways_range':
-        suggested_approach = 'Mean-Reversion Opportunity'
-        suitable_strategy = 'Mean Reversion'
-    elif direction == 'Bullish':
-        suggested_approach = 'Hold / Monitor'
-        suitable_strategy = 'Trend Following'
-    elif direction == 'Bearish':
-        suggested_approach = 'Reduced Exposure'
-        suitable_strategy = 'Reduced Exposure / Wait'
 
-    time_horizon = 'Short-to-Medium Term'
-    if regime == 'sideways_range' or regime == 'high_volatility':
-        time_horizon = 'Short Term'
-    elif backtest.get('available') is True and confirmation.get('level') == 'Strong':
-        time_horizon = 'Medium Term'
-
+def _quantitative_assessment(context):
+    source = context.get('quantitative_assessment') or {}
     return {
-        'stance': stance,
-        'confidence': confidence,
-        'suggested_approach': suggested_approach,
-        'suitable_strategy': suitable_strategy,
-        'time_horizon': time_horizon,
-        'key_reasons': _decision_key_reasons(context, analysis),
-        'main_risk': _decision_main_risk(context, analysis),
+        'preliminary_regime': source.get('preliminary_regime'),
+        'suggested_strategy': source.get('suggested_strategy'),
+        'confidence': source.get('confidence'),
+        'risk_off': source.get('risk_off') is True,
+        'allow_new_long': source.get('allow_new_long') is True,
+        'explanation': [
+            item for item in (source.get('explanation') or [])
+            if isinstance(item, str) and item.strip()
+        ],
     }
 
 
 def normalize_unified_analysis(data, context):
-    """Normalize LLM narrative and inject Django-owned facts from context."""
+    """Validate LLM comparison, verify evidence, and enforce risk limits."""
 
     if not isinstance(data, dict):
         raise UnifiedAnalysisValidationError('analysis must be a JSON object')
+    _require_exact_fields(data, TOP_LEVEL_FIELDS, 'analysis')
 
-    market_view = _section(data, 'market_view')
-    technical_view = _section(data, 'technical_view')
-    market_context_view = _section(data, 'market_context_view')
-    portfolio_view = _section(data, 'portfolio_view')
-    backtest_view = _section(data, 'backtest_view')
+    market = _section(data, 'final_market_assessment')
+    strategy = _section(data, 'final_strategy_assessment')
+    agreement = _section(data, 'quantitative_agreement')
+    risk = _section(data, 'risk_assessment')
+    _require_exact_fields(market, {'regime', 'direction', 'confidence', 'summary'}, 'final_market_assessment')
+    _require_exact_fields(
+        strategy,
+        {'selected_strategy', 'confidence', 'suitability', 'reason', 'why_not_alternatives'},
+        'final_strategy_assessment',
+    )
+    _require_exact_fields(agreement, {'agrees_with_backend', 'differences'}, 'quantitative_agreement')
+    _require_exact_fields(risk, {'risk_level', 'risk_off', 'allow_new_long', 'summary'}, 'risk_assessment')
 
-    market_regime = context.get('market_regime') or {}
-    portfolio_context = context.get('portfolio_context') or {}
-    backtest_context = context.get('backtest_context') or {}
-    backtest_available = backtest_context.get('available') is True
-    market_confirmation = (context.get('market_context') or {}).get('confirmation') or {}
+    candidate_ids = _candidate_ids(context)
+    comparison = _normalize_strategy_comparison(data.get('strategy_comparison'), context, candidate_ids)
+    final_regime = _enum(market.get('regime'), ALLOWED_REGIMES, 'final_market_assessment.regime')
+    final_strategy = _enum(
+        strategy.get('selected_strategy'), set(candidate_ids),
+        'final_strategy_assessment.selected_strategy',
+    )
+    currently_allowed = _currently_allowed_ids(context, candidate_ids)
+    if final_strategy not in currently_allowed:
+        raise UnifiedAnalysisValidationError(
+            'selected strategy is prohibited by current hard constraints',
+            reason_code='llm_strategy_not_allowed',
+        )
 
-    normalized = {
-        'market_view': {
-            'regime': market_regime.get('regime'),
-            'direction': market_regime.get('direction'),
-            'summary': _string(market_view.get('summary')),
+    final_suitability = _enum(
+        strategy.get('suitability'), ALLOWED_CANDIDATE_SUITABILITY,
+        'final_strategy_assessment.suitability',
+    )
+    if comparison[final_strategy]['suitability'] != final_suitability:
+        raise UnifiedAnalysisValidationError('final suitability contradicts strategy comparison')
+    if final_suitability in {'not_allowed', 'insufficient_evidence'}:
+        raise UnifiedAnalysisValidationError('selected strategy cannot be unavailable or prohibited')
+    if final_strategy in ACTIVE_STRATEGIES and final_suitability == 'low':
+        raise UnifiedAnalysisValidationError('an active strategy with low suitability cannot be selected')
+
+    why_not = _string_list(
+        strategy.get('why_not_alternatives'), 'final_strategy_assessment.why_not_alternatives',
+    )
+    if len(why_not) < len(candidate_ids) - 1:
+        raise UnifiedAnalysisValidationError('why_not_alternatives must address every non-selected candidate')
+
+    agrees = _boolean(agreement.get('agrees_with_backend'), 'quantitative_agreement.agrees_with_backend')
+    differences = _string_list(agreement.get('differences'), 'quantitative_agreement.differences')
+    evidence = _normalize_evidence(
+        data.get('supporting_evidence'), context,
+        field_name='supporting_evidence', allow_empty=False,
+    )
+    limitations = _string_list(data.get('limitations'), 'limitations')
+
+    quantitative = _quantitative_assessment(context)
+    same_regime = final_regime == quantitative.get('preliminary_regime')
+    same_strategy = final_strategy == quantitative.get('suggested_strategy')
+    if agrees and not (same_regime and same_strategy):
+        raise UnifiedAnalysisValidationError('agreement contradicts final assessments')
+    if not agrees and not differences:
+        raise UnifiedAnalysisValidationError('differences are required when backend assessment is rejected')
+
+    llm_allow_new_long = _boolean(risk.get('allow_new_long'), 'risk_assessment.allow_new_long')
+    llm_risk_off = _boolean(risk.get('risk_off'), 'risk_assessment.risk_off')
+    constraints = context.get('hard_constraints') or {}
+    backend_allow_new_long = constraints.get('allow_new_long') is True
+    backend_risk_off = constraints.get('risk_off') is True
+    effective_allow_new_long = llm_allow_new_long and backend_allow_new_long
+    effective_risk_off = llm_risk_off or backend_risk_off
+    if final_strategy in ACTIVE_STRATEGIES and (not effective_allow_new_long or effective_risk_off):
+        raise UnifiedAnalysisValidationError(
+            'active strategy conflicts with effective risk constraints',
+            reason_code='llm_strategy_not_allowed',
+        )
+    if final_strategy == STRATEGY_RISK_OFF and not effective_risk_off:
+        raise UnifiedAnalysisValidationError('risk_off selection requires risk_off=true')
+
+    expected_backtest_evidence = (
+        (context.get('strategy_evidence') or {}).get('backtest_evidence_available') is True
+    )
+    llm_backtest_evidence = _boolean(data.get('backtest_evidence_available'), 'backtest_evidence_available')
+    if llm_backtest_evidence != expected_backtest_evidence:
+        raise UnifiedAnalysisValidationError(
+            'backtest_evidence_available contradicts the Agent Context',
+            reason_code='llm_evidence_validation_failed',
+        )
+
+    market_confidence = _confidence(market.get('confidence'), 'final_market_assessment.confidence')
+    strategy_confidence = _confidence(strategy.get('confidence'), 'final_strategy_assessment.confidence')
+    comparison_interpretations = [
+        item['interpretation']
+        for candidate in comparison.values()
+        for key in ('supporting_factors', 'conflicting_factors')
+        for item in candidate[key]
+    ]
+    _validate_narrative_numbers(
+        [
+            market.get('summary'), strategy.get('reason'), risk.get('summary'),
+            *why_not, *differences, *limitations, *comparison_interpretations,
+            *[item['interpretation'] for item in evidence],
+        ],
+        context,
+        [market_confidence, strategy_confidence],
+    )
+
+    return {
+        'analysis_version': AGENT_ANALYSIS_VERSION,
+        'analysis_status': 'success',
+        'decision_source': 'llm_synthesis',
+        'fallback_reason': None,
+        'final_market_assessment': {
+            'regime': final_regime,
+            'direction': _enum(market.get('direction'), ALLOWED_DIRECTIONS, 'final_market_assessment.direction'),
+            'confidence': market_confidence,
+            'summary': _string(market.get('summary'), 'final_market_assessment.summary'),
         },
-        'technical_view': {
-            'trend': _string(technical_view.get('trend')),
-            'momentum': _string(technical_view.get('momentum')),
-            'volatility': _string(technical_view.get('volatility')),
+        'strategy_comparison': comparison,
+        'final_strategy_assessment': {
+            'selected_strategy': final_strategy,
+            'confidence': strategy_confidence,
+            'suitability': final_suitability,
+            'reason': _string(strategy.get('reason'), 'final_strategy_assessment.reason'),
+            'why_not_alternatives': why_not,
         },
-        'market_context_view': {
-            'broad_market': _string(market_context_view.get('broad_market')),
-            'sector': _string(market_context_view.get('sector')),
-            'confirmation': _string(market_context_view.get('confirmation')),
-            'confirmation_score': market_confirmation.get('score'),
-            'confirmation_level': market_confirmation.get('level'),
+        'quantitative_assessment': quantitative,
+        'quantitative_agreement': {'agrees_with_backend': agrees, 'differences': differences},
+        'risk_assessment': {
+            'risk_level': _enum(risk.get('risk_level'), ALLOWED_RISK_LEVELS, 'risk_assessment.risk_level'),
+            'risk_off': effective_risk_off,
+            'allow_new_long': effective_allow_new_long,
+            'summary': _string(risk.get('summary'), 'risk_assessment.summary'),
         },
-        'portfolio_view': {
-            'has_position': portfolio_context.get('has_position') is True,
-            'portfolio_weight': portfolio_context.get('portfolio_weight'),
-            'exposure_comment': _string(portfolio_view.get('exposure_comment')),
-        },
-        'backtest_view': {
-            'available': backtest_available,
-            'summary': _string(backtest_view.get('summary')),
-            'strengths': _string_list(backtest_view.get('strengths')) if backtest_available else [],
-            'risks': _string_list(backtest_view.get('risks')) if backtest_available else [],
-        },
-        'overall_assessment': _string(data.get('overall_assessment')),
-        'risk_factors': _string_list(data.get('risk_factors')),
+        'backtest_evidence_available': llm_backtest_evidence,
+        'available_strategies': context.get('available_strategies') or [],
+        'related_backtest_strategy': context.get('related_backtest_strategy'),
+        'supporting_evidence': evidence,
+        'limitations': limitations,
     }
-    normalized['decision_summary'] = build_decision_summary(context, normalized)
-    return normalized
+
+
+def _fallback_direction(context):
+    direction = ((context.get('market_regime') or {}).get('direction') or '').lower()
+    return direction if direction in ALLOWED_DIRECTIONS else 'neutral'
+
+
+def _fallback_risk_level(context):
+    constraints = context.get('hard_constraints') or {}
+    volatility = (context.get('market_regime') or {}).get('volatility') or {}
+    percentile = volatility.get('volatility_percentile')
+    if constraints.get('risk_off') is True:
+        return 'high'
+    if constraints.get('allow_new_long') is not True:
+        return 'medium'
+    if isinstance(percentile, (int, float)) and percentile >= 0.85:
+        return 'high'
+    return 'medium'
+
+
+def _fallback_confidence(value, default=0.0):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    return round(min(1.0, max(0.0, float(value))), 6)
+
+
+def build_quantitative_fallback(context, fallback_reason):
+    """Convert deterministic preliminary facts into a safe v3 response."""
+
+    quantitative = _quantitative_assessment(context)
+    constraints = context.get('hard_constraints') or {}
+    explanations = quantitative.get('explanation') or []
+    candidate_ids = _candidate_ids(context)
+    currently_allowed = _currently_allowed_ids(context, candidate_ids)
+    suggested = quantitative.get('suggested_strategy')
+    allow_new_long = constraints.get('allow_new_long') is True
+    risk_off = constraints.get('risk_off') is True
+    if risk_off and STRATEGY_RISK_OFF in currently_allowed:
+        selected_strategy = STRATEGY_RISK_OFF
+    elif not allow_new_long and STRATEGY_NO_STRATEGY in currently_allowed:
+        selected_strategy = STRATEGY_NO_STRATEGY
+    elif suggested in currently_allowed:
+        selected_strategy = suggested
+    else:
+        selected_strategy = STRATEGY_NO_STRATEGY
+
+    comparison = {}
+    for strategy_id in candidate_ids:
+        if strategy_id not in currently_allowed:
+            suitability = 'not_allowed'
+        elif strategy_id == selected_strategy:
+            suitability = 'high'
+        elif strategy_id == suggested:
+            suitability = 'medium'
+        else:
+            suitability = 'insufficient_evidence'
+        comparison[strategy_id] = {
+            'suitability': suitability,
+            'supporting_factors': [],
+            'conflicting_factors': [],
+        }
+
+    preferred_factors = {
+        'Preliminary Regime', 'Suggested Strategy', 'ADX',
+        'Choppiness Index', 'Volatility Percentile',
+    }
+    evidence = [
+        {
+            'factor': item['factor'],
+            'value': item['value'],
+            'interpretation': 'Deterministic input retained for the quantitative fallback.',
+        }
+        for item in (context.get('evidence_catalog') or [])
+        if isinstance(item, dict) and item.get('factor') in preferred_factors
+    ][:4]
+    limitations = [
+        'DeepSeek synthesis was unavailable; the final result uses the deterministic quantitative fallback.',
+        'Comparable candidate backtest evidence is unavailable.',
+    ]
+    data_quality = context.get('data_quality') or {}
+    unavailable = [name for name, available in data_quality.items() if available is False]
+    if unavailable:
+        limitations.append('Unavailable context modules: ' + ', '.join(sorted(unavailable)) + '.')
+
+    same_strategy = selected_strategy == suggested
+    differences = [] if same_strategy else [
+        'The safe fallback strategy differs from the preliminary strategy because current hard constraints prohibit it.'
+    ]
+    why_not = [
+        f'{strategy_id} was not selected because the deterministic fallback ranked it below {selected_strategy}.'
+        for strategy_id in candidate_ids if strategy_id != selected_strategy
+    ]
+    return {
+        'analysis_version': AGENT_ANALYSIS_VERSION,
+        'analysis_status': 'fallback',
+        'decision_source': 'quantitative_fallback',
+        'fallback_reason': fallback_reason,
+        'final_market_assessment': {
+            'regime': quantitative.get('preliminary_regime'),
+            'direction': _fallback_direction(context),
+            'confidence': _fallback_confidence(quantitative.get('confidence')),
+            'summary': explanations[0] if explanations else 'Deterministic market regime retained as the fallback assessment.',
+        },
+        'strategy_comparison': comparison,
+        'final_strategy_assessment': {
+            'selected_strategy': selected_strategy,
+            'confidence': _fallback_confidence(quantitative.get('confidence')),
+            'suitability': comparison[selected_strategy]['suitability'],
+            'reason': explanations[-1] if explanations else 'Deterministic strategy selection retained as the fallback assessment.',
+            'why_not_alternatives': why_not,
+        },
+        'quantitative_assessment': quantitative,
+        'quantitative_agreement': {
+            'agrees_with_backend': same_strategy,
+            'differences': differences,
+        },
+        'risk_assessment': {
+            'risk_level': _fallback_risk_level(context),
+            'risk_off': risk_off,
+            'allow_new_long': allow_new_long,
+            'summary': 'Django hard risk constraints remain authoritative in fallback mode.',
+        },
+        'backtest_evidence_available': (
+            (context.get('strategy_evidence') or {}).get('backtest_evidence_available') is True
+        ),
+        'available_strategies': context.get('available_strategies') or [],
+        'related_backtest_strategy': context.get('related_backtest_strategy'),
+        'supporting_evidence': evidence,
+        'limitations': limitations,
+    }
+
+
+__all__ = [
+    'AGENT_ANALYSIS_PROMPT_VERSION', 'AGENT_ANALYSIS_VERSION',
+    'UnifiedAnalysisValidationError', 'build_quantitative_fallback',
+    'has_forbidden_action_language', 'has_open_close_direction_contradiction',
+    'normalize_unified_analysis',
+]

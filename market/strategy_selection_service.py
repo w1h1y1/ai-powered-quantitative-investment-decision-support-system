@@ -13,16 +13,17 @@ from .regime_config import (
     REGIME_HIGH_VOLATILITY,
     REGIME_SIDEWAYS,
 )
-
-
-STRATEGY_TREND_FOLLOWING = 'trend_following'
-STRATEGY_MEAN_REVERSION = 'mean_reversion'
-STRATEGY_RISK_OFF = 'risk_off'
-STRATEGIES = (
-    STRATEGY_TREND_FOLLOWING,
+from .strategy_catalog import (
+    DETERMINISTIC_STRATEGY_IDS,
     STRATEGY_MEAN_REVERSION,
     STRATEGY_RISK_OFF,
+    STRATEGY_TREND_FOLLOWING,
+    get_agent_strategy_catalog,
+    get_strategy_definition,
 )
+
+
+STRATEGIES = DETERMINISTIC_STRATEGY_IDS
 
 STRATEGY_MODE_ACTIVE = 'active'
 STRATEGY_MODE_DEFENSIVE = 'defensive'
@@ -48,8 +49,6 @@ REGIME_STRATEGY_MAP = {
         risk_off=False,
         reason=(
             'The current market regime is Bullish Trend.',
-            'Trend Following is preferred because the current market shows '
-            'a meaningful positive directional structure.',
         ),
     ),
     REGIME_SIDEWAYS: StrategySelectionRule(
@@ -60,7 +59,6 @@ REGIME_STRATEGY_MAP = {
         reason=(
             'The current market regime is Sideways / Range.',
             'A strong directional trend is not confirmed.',
-            'Mean Reversion is preferred under the current regime.',
         ),
     ),
     REGIME_HIGH_VOLATILITY: StrategySelectionRule(
@@ -70,7 +68,6 @@ REGIME_STRATEGY_MAP = {
         risk_off=True,
         reason=(
             'The current market regime is High Volatility.',
-            'Risk control takes priority over active strategy deployment.',
             'New long positions are disabled under the current configuration.',
         ),
     ),
@@ -81,7 +78,6 @@ REGIME_STRATEGY_MAP = {
         risk_off=False,
         reason=(
             'The current market regime is Bearish Trend.',
-            'Trend Following remains the selected strategy for a directional market.',
             'The system currently operates in long-only mode.',
             'New long positions are disabled while the bearish trend persists.',
         ),
@@ -112,6 +108,7 @@ def _unavailable_response(
         'risk_off': None,
         'selection_confidence': None,
         'reason': [reason],
+        'strategy_catalog': get_agent_strategy_catalog(),
     }
 
 
@@ -148,6 +145,11 @@ def select_strategy(market_regime_result: Mapping):
         )
 
     regime_confidence = market_regime_result.get('confidence')
+    strategy_definition = get_strategy_definition(rule.selected_strategy)
+    selection_reasons = list(rule.reason)
+    catalog_rationale = strategy_definition.get('preliminary_selection_rationale')
+    if catalog_rationale:
+        selection_reasons.insert(1, catalog_rationale)
     return {
         'symbol': market_regime_result.get('symbol'),
         'strategy_selection_available': True,
@@ -162,7 +164,9 @@ def select_strategy(market_regime_result: Mapping):
         'allow_new_long': rule.allow_new_long,
         'risk_off': rule.risk_off,
         'selection_confidence': regime_confidence,
-        'reason': list(rule.reason),
+        'reason': selection_reasons,
+        'strategy_definition': strategy_definition,
+        'strategy_catalog': get_agent_strategy_catalog(),
     }
 
 

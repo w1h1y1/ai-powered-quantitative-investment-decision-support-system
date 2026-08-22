@@ -131,7 +131,7 @@ class UnifiedAgentContextView(APIView):
 
 
 class AgentAnalysisView(APIView):
-    """POST symbol -> agent_context_v1 -> DeepSeek -> structured analysis."""
+    """POST symbol -> quantitative preliminary view -> DeepSeek final synthesis."""
 
     permission_classes = [permissions.IsAuthenticated]
 

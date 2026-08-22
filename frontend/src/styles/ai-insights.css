@@ -500,6 +500,41 @@
   margin-top: 12px;
 }
 
+.ai-insights-strategy-comparison-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.ai-insights-strategy-candidate {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e7ebf1;
+  border-radius: 10px;
+  background: #fafbfd;
+}
+
+.ai-insights-strategy-candidate > span {
+  color: #303b50;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.ai-insights-strategy-candidate > div > p {
+  margin: 5px 0 8px;
+  color: var(--accent);
+  font-size: 10px;
+}
+
+.ai-insights-strategy-candidate h3 {
+  margin: 9px 0 4px;
+  color: #697587;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .ai-insights-list-block h3 {
   margin: 0 0 5px;
   color: #303b50;
@@ -1522,6 +1557,10 @@
   .ai-insights-toggle-grid,
   .ai-insights-overview-grid,
   .ai-insights-metric-list {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-insights-strategy-comparison-grid {
     grid-template-columns: 1fr;
   }
 

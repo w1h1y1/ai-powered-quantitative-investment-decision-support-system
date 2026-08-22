@@ -3,6 +3,16 @@ const enumLabels = {
   sideways_range: 'Sideways Range',
   bullish_trend: 'Bullish Trend',
   bearish_trend: 'Bearish Trend',
+  trend_following: 'Trend Following',
+  mean_reversion: 'Mean Reversion',
+  risk_off: 'Risk Off',
+  no_strategy: 'No Suitable Strategy',
+  not_allowed: 'Not Allowed',
+  insufficient_evidence: 'Insufficient Evidence',
+  llm_synthesis: 'LLM Synthesis',
+  quantitative_fallback: 'Quantitative Fallback',
+  llm_invalid_json: 'LLM Invalid JSON',
+  llm_schema_validation_failed: 'LLM Schema Validation Failed',
 }
 
 export function formatAnalysisEnumLabel(value) {

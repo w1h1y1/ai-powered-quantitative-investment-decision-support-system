@@ -45,7 +45,7 @@ export function LoadingState() {
     <section className="ai-insights-card ai-insights-empty-card" aria-live="polite" aria-busy="true">
       <i className="ai-insights-spinner is-large" aria-hidden="true" />
       <h2>Generating AI analysis...</h2>
-      <p>Building deterministic context and requesting a structured explanation.</p>
+      <p>Building deterministic evidence and requesting a structured final synthesis.</p>
     </section>
   )
 }
@@ -77,6 +77,12 @@ function Metric({ label, value }) {
   )
 }
 
+function strategyDisplayName(analysis, strategyId) {
+  const definition = (analysis.available_strategies || [])
+    .find((item) => item?.id === strategyId)
+  return definition?.name || formatAnalysisEnumLabel(strategyId)
+}
+
 export function DecisionSummaryCard({ analysis }) {
   const decision = analysis.decision_summary || {}
   return (
@@ -102,6 +108,190 @@ export function DecisionSummaryCard({ analysis }) {
           <p>{decision.main_risk}</p>
         </div>
       ) : null}
+    </SectionCard>
+  )
+}
+
+export function FinalAIAssessmentCard({ analysis }) {
+  const assessment = analysis.final_market_assessment || {}
+  return (
+    <SectionCard eyebrow="Final judgment" title="Final AI Assessment">
+      <div className="ai-insights-decision-grid">
+        <Metric label="Market Regime" value={formatAnalysisEnumLabel(assessment.regime)} />
+        <Metric label="Direction" value={formatAnalysisEnumLabel(assessment.direction)} />
+        <Metric label="Confidence" value={formatRatioAsPercent(assessment.confidence)} />
+      </div>
+      <p className="ai-insights-card-copy">{assessment.summary || 'No final summary was provided.'}</p>
+    </SectionCard>
+  )
+}
+
+export function FinalStrategyAssessmentCard({ analysis }) {
+  const assessment = analysis.final_strategy_assessment || {}
+  return (
+    <SectionCard eyebrow="Final strategy" title="Final Strategy Assessment">
+      <Metric label="Selected Strategy" value={strategyDisplayName(analysis, assessment.selected_strategy)} />
+      {assessment.confidence !== undefined ? (
+        <Metric label="Confidence" value={formatRatioAsPercent(assessment.confidence)} />
+      ) : null}
+      <Metric label="Suitability" value={formatAnalysisEnumLabel(assessment.suitability)} />
+      <p className="ai-insights-card-copy">{assessment.reason || 'No strategy rationale was provided.'}</p>
+      {assessment.why_not_alternatives?.length ? (
+        <div className="ai-insights-list-block">
+          <h3>Why Not the Alternatives</h3>
+          <ul className="ai-insights-risk-list">
+            {assessment.why_not_alternatives.map((item) => <li key={item}>{item}</li>)}
+          </ul>
+        </div>
+      ) : null}
+    </SectionCard>
+  )
+}
+
+function ComparisonFactors({ factors, emptyText }) {
+  if (!factors?.length) return <p className="ai-insights-card-copy">{emptyText}</p>
+  return (
+    <div className="ai-insights-list-block">
+      {factors.map((item, index) => (
+        <div className="ai-insights-context-line" key={`${item.factor}-${index}`}>
+          <span>{item.factor}</span>
+          <p><strong>{String(item.value)}</strong><small>{item.interpretation}</small></p>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function StrategyComparisonCard({ analysis }) {
+  const comparison = analysis.strategy_comparison || {}
+  const catalog = analysis.available_strategies?.length
+    ? analysis.available_strategies
+    : Object.keys(comparison).map((id) => ({ id, name: formatAnalysisEnumLabel(id) }))
+  if (!catalog.length) return null
+
+  return (
+    <SectionCard eyebrow="Candidate evaluation" title="Strategy Comparison">
+      <Metric
+        label="Comparable Backtest Evidence"
+        value={analysis.backtest_evidence_available ? 'Available' : 'Unavailable'}
+      />
+      <div className="ai-insights-strategy-comparison-grid">
+        {catalog.map((definition) => {
+          const candidate = comparison[definition.id] || {}
+          return (
+            <article className="ai-insights-strategy-candidate" key={definition.id}>
+              <span>{definition.name || formatAnalysisEnumLabel(definition.id)}</span>
+              <div>
+                <p><strong>{formatAnalysisEnumLabel(candidate.suitability) || '—'}</strong></p>
+                <h3>Supporting Factors</h3>
+                <ComparisonFactors
+                  factors={candidate.supporting_factors}
+                  emptyText="No verified supporting factor was reported."
+                />
+                <h3>Conflicting Factors</h3>
+                <ComparisonFactors
+                  factors={candidate.conflicting_factors}
+                  emptyText="No verified conflicting factor was reported."
+                />
+              </div>
+            </article>
+          )
+        })}
+      </div>
+    </SectionCard>
+  )
+}
+
+export function QuantitativeAssessmentCard({ analysis }) {
+  const assessment = analysis.quantitative_assessment || {}
+  return (
+    <SectionCard eyebrow="Deterministic engine" title="Quantitative Assessment">
+      <div className="ai-insights-decision-grid">
+        <Metric label="Preliminary Regime" value={formatAnalysisEnumLabel(assessment.preliminary_regime)} />
+        <Metric label="Suggested Strategy" value={formatAnalysisEnumLabel(assessment.suggested_strategy)} />
+        <Metric label="Confidence" value={formatRatioAsPercent(assessment.confidence)} />
+        <Metric label="Risk Off" value={assessment.risk_off ? 'Yes' : 'No'} />
+        <Metric label="Allow New Long" value={assessment.allow_new_long ? 'Yes' : 'No'} />
+      </div>
+      {assessment.explanation?.length ? (
+        <ul className="ai-insights-risk-list">
+          {assessment.explanation.map((item) => <li key={item}>{item}</li>)}
+        </ul>
+      ) : null}
+    </SectionCard>
+  )
+}
+
+export function QuantitativeAgreementCard({ analysis }) {
+  const agreement = analysis.quantitative_agreement || {}
+  return (
+    <SectionCard eyebrow="Comparison" title="Agreement with Quantitative Engine">
+      <Metric label="Agreement" value={agreement.agrees_with_backend ? 'Agree' : 'Disagree'} />
+      {agreement.differences?.length ? (
+        <ul className="ai-insights-risk-list">
+          {agreement.differences.map((item) => <li key={item}>{item}</li>)}
+        </ul>
+      ) : (
+        <p className="ai-insights-card-copy">No differences were reported.</p>
+      )}
+    </SectionCard>
+  )
+}
+
+export function RiskAssessmentCard({ analysis }) {
+  const risk = analysis.risk_assessment || {}
+  return (
+    <SectionCard eyebrow="Hard constraints applied" title="Risk Assessment">
+      <div className="ai-insights-decision-grid">
+        <Metric label="Risk Level" value={formatAnalysisEnumLabel(risk.risk_level)} />
+        <Metric label="Risk Off" value={risk.risk_off ? 'Yes' : 'No'} />
+        <Metric label="Allow New Long" value={risk.allow_new_long ? 'Yes' : 'No'} />
+      </div>
+      <p className="ai-insights-card-copy">{risk.summary || 'No risk summary was provided.'}</p>
+    </SectionCard>
+  )
+}
+
+export function SupportingEvidenceCard({ analysis }) {
+  const evidence = analysis.supporting_evidence || []
+  return (
+    <SectionCard eyebrow="Validated context" title="Supporting Evidence">
+      {evidence.length ? (
+        <div className="ai-insights-list-block">
+          {evidence.map((item, index) => (
+            <div className="ai-insights-context-line" key={`${item.factor}-${index}`}>
+              <span>{item.factor}</span>
+              <p><strong>{String(item.value)}</strong><small>{item.interpretation}</small></p>
+            </div>
+          ))}
+        </div>
+      ) : <p className="ai-insights-card-copy">No supporting evidence was returned.</p>}
+    </SectionCard>
+  )
+}
+
+export function LimitationsCard({ analysis }) {
+  const limitations = analysis.limitations || []
+  return (
+    <SectionCard eyebrow="Uncertainty" title="Limitations">
+      {limitations.length ? (
+        <ul className="ai-insights-risk-list">
+          {limitations.map((item) => <li key={item}>{item}</li>)}
+        </ul>
+      ) : <p className="ai-insights-card-copy">No additional limitations were reported.</p>}
+    </SectionCard>
+  )
+}
+
+export function AnalysisSourceCard({ analysis, metadata }) {
+  const source = analysis.decision_source || metadata?.decision_source || 'llm_synthesis'
+  const status = analysis.analysis_status || metadata?.analysis_status || 'success'
+  const fallbackReason = analysis.fallback_reason || metadata?.fallback_reason
+  return (
+    <SectionCard eyebrow="Provenance" title="Analysis Source">
+      <Metric label="Decision Source" value={formatAnalysisEnumLabel(source)} />
+      <Metric label="Analysis Status" value={formatAnalysisEnumLabel(status)} />
+      {fallbackReason ? <Metric label="Fallback Reason" value={formatAnalysisEnumLabel(fallbackReason)} /> : null}
     </SectionCard>
   )
 }
@@ -360,6 +550,9 @@ export default function AIInsightsContent() {
             provider: response.metadata?.provider,
             model: response.metadata?.model,
             generated_at: response.generated_at,
+            analysis_status: response.analysis_status,
+            decision_source: response.decision_source,
+            fallback_reason: response.fallback_reason,
             is_restored: false,
           },
         })
@@ -395,6 +588,9 @@ export default function AIInsightsContent() {
               provider: response.provider,
               model: response.model,
               generated_at: response.generated_at,
+              analysis_status: response.analysis?.analysis_status,
+              decision_source: response.analysis?.decision_source,
+              fallback_reason: response.analysis?.fallback_reason,
               is_restored: true,
             },
           })
@@ -476,17 +672,35 @@ export default function AIInsightsContent() {
           <>
             {analysisUnavailable ? <UnavailableState reason={analysisUnavailable} /> : null}
             {error ? <ErrorState message={error} /> : null}
-            <DecisionSummaryCard analysis={analysis} />
-            <OverviewCard analysis={analysis} metadata={analysis.metadata} />
-            <div className="ai-insights-analysis-grid">
-              <MarketViewCard analysis={analysis} />
-              <TechnicalViewCard analysis={analysis} />
-              <MarketContextCard analysis={analysis} />
-              <PortfolioContextCard analysis={analysis} />
-              <BacktestEvidenceCard analysis={analysis} />
-              <RiskFactorsCard analysis={analysis} />
-            </div>
-            <OverallAssessmentCard analysis={analysis} />
+            {analysis.final_market_assessment ? (
+              <>
+                <FinalAIAssessmentCard analysis={analysis} />
+                <FinalStrategyAssessmentCard analysis={analysis} />
+                <StrategyComparisonCard analysis={analysis} />
+                <div className="ai-insights-analysis-grid">
+                  <QuantitativeAssessmentCard analysis={analysis} />
+                  <QuantitativeAgreementCard analysis={analysis} />
+                  <RiskAssessmentCard analysis={analysis} />
+                  <SupportingEvidenceCard analysis={analysis} />
+                  <LimitationsCard analysis={analysis} />
+                  <AnalysisSourceCard analysis={analysis} metadata={analysis.metadata} />
+                </div>
+              </>
+            ) : (
+              <>
+                <DecisionSummaryCard analysis={analysis} />
+                <OverviewCard analysis={analysis} metadata={analysis.metadata} />
+                <div className="ai-insights-analysis-grid">
+                  <MarketViewCard analysis={analysis} />
+                  <TechnicalViewCard analysis={analysis} />
+                  <MarketContextCard analysis={analysis} />
+                  <PortfolioContextCard analysis={analysis} />
+                  <BacktestEvidenceCard analysis={analysis} />
+                  <RiskFactorsCard analysis={analysis} />
+                </div>
+                <OverallAssessmentCard analysis={analysis} />
+              </>
+            )}
             <MetadataFooter metadata={analysis.metadata} />
             <aside className="ai-insights-disclaimer" aria-label="AI analysis risk disclosure">
               <Icon name="shield" />

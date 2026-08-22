@@ -96,9 +96,12 @@ class StrategySelectionRuleTests(SimpleTestCase):
 
                 result = select_strategy(payload)
 
+                rule_reasons = list(REGIME_STRATEGY_MAP[regime].reason)
+                self.assertEqual(result['reason'][0], rule_reasons[0])
+                self.assertEqual(result['reason'][2:], rule_reasons[1:])
                 self.assertEqual(
-                    result['reason'],
-                    list(REGIME_STRATEGY_MAP[regime].reason),
+                    result['reason'][1],
+                    result['strategy_definition']['preliminary_selection_rationale'],
                 )
                 self.assertNotIn('UPSTREAM_SENTINEL', ' '.join(result['reason']))
                 self.assertEqual(result['regime_confidence'], 'medium')
