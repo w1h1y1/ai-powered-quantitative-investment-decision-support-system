@@ -488,7 +488,7 @@ class AgentAnalysisServiceTests(SimpleTestCase):
         data = valid_analysis()
         data['strategy_comparison']['trend_following']['suitability'] = 'high'
         response, _ = self.run_with_context(FakeProvider(analysis=data))
-        self.assertEqual(response['fallback_reason'], 'llm_schema_validation_failed')
+        self.assertEqual(response['fallback_reason'], 'llm_strategy_not_allowed')
 
 
 class AgentAnalysisApiTests(APITestCase):

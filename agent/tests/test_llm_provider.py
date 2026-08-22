@@ -110,6 +110,18 @@ class DeepSeekProviderTests(SimpleTestCase):
 
         self.assertEqual(result.analysis['market_summary'], 'Fenced.')
 
+    def test_json_with_leading_and_trailing_explanation_is_extracted(self):
+        content = 'Here is the requested object:\n{"market_summary": "Embedded."}\nEnd.'
+        with patch(
+            'agent.llm.deepseek_provider.urlopen',
+            return_value=FakeHTTPResponse(chat_response_with_content(content)),
+        ):
+            result = configured_provider().generate_structured_analysis({
+                'system': 's', 'user': 'u',
+            })
+        self.assertTrue(result.succeeded)
+        self.assertEqual(result.analysis['market_summary'], 'Embedded.')
+
     def test_single_json_fence_is_stripped_safely(self):
         content = '```json\n{"market_summary": "Fenced.", "key_reasons": []}\n```'
         self.assertEqual(

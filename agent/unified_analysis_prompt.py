@@ -50,14 +50,109 @@ Hard rules:
 - both confidence fields: numbers from 0 to 1.
 - every suitability field: high, medium, low, not_allowed, or insufficient_evidence.
 - risk_level: low, medium, or high.
-- why_not_alternatives must address every non-selected candidate. supporting_evidence must be non-empty.
+- why_not_alternatives must be a JSON array of at least three separate strings, never one string or an object, and must address every non-selected candidate.
+- differences, limitations, supporting_factors, and conflicting_factors must always be JSON arrays, including when empty. Never use null or a single string for an array field.
+- supporting_evidence must be a non-empty JSON array. Evidence value may be a JSON number, string, or boolean only when copied exactly from evidence_catalog.
+- Use the machine-readable enum tokens exactly as written above; do not output display labels, spaces, hyphens, title case, or percentage strings.
 """
+
+
+def _schema_example(context):
+    candidate_ids = [
+        item.get('id') for item in (context.get('available_strategies') or [])
+        if isinstance(item, dict) and item.get('id')
+    ]
+    candidate_ids = candidate_ids or [
+        'trend_following', 'mean_reversion', 'risk_off', 'no_strategy',
+    ]
+    constraints = context.get('hard_constraints') or {}
+    currently_allowed = set(
+        constraints.get('currently_allowed_strategies') or candidate_ids
+    )
+    quantitative = context.get('quantitative_assessment') or {}
+    selected = quantitative.get('suggested_strategy')
+    if selected not in currently_allowed:
+        selected = 'risk_off' if constraints.get('risk_off') is True else 'no_strategy'
+    if selected not in candidate_ids:
+        selected = candidate_ids[0]
+    comparison = {}
+    for strategy_id in candidate_ids:
+        if strategy_id not in currently_allowed:
+            suitability = 'not_allowed'
+        elif strategy_id == selected:
+            suitability = 'high'
+        else:
+            suitability = 'medium'
+        comparison[strategy_id] = {
+            'suitability': suitability,
+            'supporting_factors': [],
+            'conflicting_factors': [],
+        }
+    evidence_catalog = context.get('evidence_catalog') or []
+    evidence_source = next(
+        (item for item in evidence_catalog if isinstance(item, dict) and item.get('factor')),
+        {'factor': 'Preliminary Regime', 'value': quantitative.get('preliminary_regime')},
+    )
+    confidence = quantitative.get('confidence')
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+        confidence = 0.5
+    direction = str((context.get('market_regime') or {}).get('direction') or 'neutral').lower()
+    if direction not in {'bullish', 'bearish', 'neutral', 'mixed'}:
+        direction = 'neutral'
+    regime = quantitative.get('preliminary_regime')
+    if regime not in {'bullish_trend', 'bearish_trend', 'sideways_range', 'high_volatility'}:
+        regime = 'high_volatility'
+    return {
+        'final_market_assessment': {
+            'regime': regime,
+            'direction': direction,
+            'confidence': confidence,
+            'summary': 'Concise assessment using only supplied evidence.',
+        },
+        'strategy_comparison': comparison,
+        'final_strategy_assessment': {
+            'selected_strategy': selected,
+            'confidence': confidence,
+            'suitability': comparison[selected]['suitability'],
+            'reason': 'Concise relative strategy rationale.',
+            'why_not_alternatives': [
+                f'{strategy_id} was not selected because it ranked below {selected}.'
+                for strategy_id in candidate_ids if strategy_id != selected
+            ],
+        },
+        'quantitative_agreement': {
+            'agrees_with_backend': selected == quantitative.get('suggested_strategy'),
+            'differences': (
+                [] if selected == quantitative.get('suggested_strategy')
+                else ['Final strategy differs because the preliminary candidate is currently prohibited.']
+            ),
+        },
+        'risk_assessment': {
+            'risk_level': 'high' if constraints.get('risk_off') is True else 'medium',
+            'risk_off': constraints.get('risk_off') is True,
+            'allow_new_long': constraints.get('allow_new_long') is True,
+            'summary': 'Django hard constraints remain authoritative.',
+        },
+        'backtest_evidence_available': (
+            (context.get('strategy_evidence') or {}).get('backtest_evidence_available') is True
+        ),
+        'supporting_evidence': [{
+            'factor': evidence_source.get('factor'),
+            'value': evidence_source.get('value'),
+            'interpretation': 'Concise interpretation of the copied value.',
+        }],
+        'limitations': [],
+    }
 
 
 def _prompt(context, extra_instruction=''):
     user_prompt = (
         'Produce the final hybrid decision from this deterministic Agent Context '
         f'(prompt version {AGENT_ANALYSIS_PROMPT_VERSION}):\n\n'
+        'Follow this complete JSON shape exactly. The example uses current Context values '
+        'only to demonstrate types; still perform the required independent comparison:\n'
+        f'{json.dumps(_schema_example(context), indent=2, default=str)}\n\n'
+        'Agent Context:\n'
         f'{json.dumps(context, indent=2, default=str)}'
     )
     if extra_instruction:
@@ -69,11 +164,23 @@ def build_unified_analysis_prompt(context):
     return _prompt(context)
 
 
-def build_strict_json_retry_prompt(context):
+def build_strict_json_retry_prompt(context, validation_details=None):
+    detail_text = ''
+    if validation_details:
+        detail_text = (
+            ' The previous response failed this safe validation diagnostic: '
+            f'{json.dumps(validation_details, default=str)}.'
+        )
     return _prompt(
         context,
-        'Correction required: return valid JSON with every required field and exact evidence_catalog values.',
+        'Correction required: return a corrected complete JSON object only, with every '
+        'required field, exact machine enum tokens, correct JSON types, and exact '
+        f'evidence_catalog values.{detail_text}',
     )
+
+
+def build_schema_repair_prompt(context, validation_details):
+    return build_strict_json_retry_prompt(context, validation_details)
 
 
 def build_constraint_retry_prompt(context):

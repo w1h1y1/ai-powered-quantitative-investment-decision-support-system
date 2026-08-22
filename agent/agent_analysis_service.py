@@ -5,7 +5,7 @@ import logging
 from .llm.base import UnsupportedProviderError
 from .llm.provider_factory import get_llm_provider
 from .unified_analysis_prompt import (
-    build_constraint_retry_prompt,
+    build_schema_repair_prompt,
     build_strict_json_retry_prompt,
     build_unified_analysis_prompt,
 )
@@ -17,6 +17,7 @@ from .unified_analysis_schema import (
     has_open_close_direction_contradiction,
     has_forbidden_action_language,
     normalize_unified_analysis,
+    standardize_unified_analysis_input,
 )
 from .unified_context_service import (
     AGENT_UNIFIED_CONTEXT_VERSION,
@@ -39,22 +40,76 @@ FAILURE_REASONS = {
 }
 
 
-def _metadata(context, provider, model):
+def _metadata(
+    context,
+    provider,
+    model,
+    *,
+    schema_repair_attempted=False,
+    schema_repair_succeeded=False,
+    formatting_normalizations=None,
+    hard_constraint_violation_detected=False,
+    hard_constraint_override_applied=False,
+):
     return {
         'provider': provider,
         'model': model,
         'as_of_date': context.get('as_of_date'),
         'prompt_version': AGENT_ANALYSIS_PROMPT_VERSION,
         'analysis_version': AGENT_ANALYSIS_VERSION,
+        'schema_repair_attempted': schema_repair_attempted,
+        'schema_repair_succeeded': schema_repair_succeeded,
+        'formatting_normalizations': sorted(set(formatting_normalizations or [])),
+        'hard_constraint_violation_detected': hard_constraint_violation_detected,
+        'hard_constraint_override_applied': hard_constraint_override_applied,
     }
 
 
-def _fallback(context, provider, model, reason_code, reason):
+def _fallback(
+    context,
+    provider,
+    model,
+    reason_code,
+    reason,
+    *,
+    validation_error=None,
+    validation_stage=None,
+    validation_error_code=None,
+    schema_repair_attempted=False,
+    formatting_normalizations=None,
+    hard_constraint_violation_detected=False,
+):
+    details = validation_error.safe_details() if validation_error else {}
+    stage = details.get('validation_stage') or validation_stage
+    error_code = details.get('validation_error_code') or validation_error_code
+    error_path = details.get('validation_error_path')
+    hard_constraint_detected = (
+        hard_constraint_violation_detected
+        or details.get('hard_constraint_triggered') is True
+    )
     logger.warning(
-        'Agent analysis fallback provider=%s model=%s symbol=%s reason=%s',
+        'Agent analysis fallback provider=%s model=%s symbol=%s '
+        'prompt_version=%s analysis_version=%s reason_code=%s stage=%s '
+        'error_code=%s path=%s expected=%s actual_type=%s actual=%r '
+        'missing_fields=%s extra_fields=%s illegal_strategy_id=%s '
+        'hard_constraint_triggered=%s schema_repair_attempted=%s reason=%s',
         provider,
         model,
         context.get('symbol'),
+        AGENT_ANALYSIS_PROMPT_VERSION,
+        AGENT_ANALYSIS_VERSION,
+        reason_code,
+        stage,
+        error_code,
+        error_path,
+        details.get('expected'),
+        details.get('actual_type'),
+        details.get('actual'),
+        details.get('missing_fields'),
+        details.get('extra_fields'),
+        details.get('illegal_strategy_id'),
+        hard_constraint_detected,
+        schema_repair_attempted,
         reason,
     )
     return {
@@ -64,20 +119,51 @@ def _fallback(context, provider, model, reason_code, reason):
         'decision_source': 'quantitative_fallback',
         'fallback_reason': reason_code,
         'unavailable_reason': reason,
+        'validation_stage': stage,
+        'validation_error_code': error_code,
+        'validation_error_path': error_path,
+        'hard_constraint_override_applied': hard_constraint_detected,
         'analysis': build_quantitative_fallback(context, reason_code),
-        'metadata': _metadata(context, provider, model),
+        'metadata': _metadata(
+            context, provider, model,
+            schema_repair_attempted=schema_repair_attempted,
+            schema_repair_succeeded=False,
+            formatting_normalizations=formatting_normalizations,
+            hard_constraint_violation_detected=hard_constraint_detected,
+            hard_constraint_override_applied=hard_constraint_detected,
+        ),
     }
 
 
-def _success(context, provider, model, analysis):
+def _success(
+    context,
+    provider,
+    model,
+    analysis,
+    *,
+    schema_repair_attempted=False,
+    formatting_normalizations=None,
+    hard_constraint_violation_detected=False,
+):
     return {
         'symbol': context.get('symbol'),
         'context_version': context.get('context_version'),
         'analysis_status': 'success',
         'decision_source': 'llm_synthesis',
         'fallback_reason': None,
+        'validation_stage': None,
+        'validation_error_code': None,
+        'validation_error_path': None,
+        'hard_constraint_override_applied': False,
         'analysis': analysis,
-        'metadata': _metadata(context, provider, model),
+        'metadata': _metadata(
+            context, provider, model,
+            schema_repair_attempted=schema_repair_attempted,
+            schema_repair_succeeded=schema_repair_attempted,
+            formatting_normalizations=formatting_normalizations,
+            hard_constraint_violation_detected=hard_constraint_violation_detected,
+            hard_constraint_override_applied=False,
+        ),
     }
 
 
@@ -85,22 +171,60 @@ def _needs_retry(result):
     return result.failure_reason in {'invalid_json', 'invalid_response'}
 
 
-def _violates_constraints(analysis, context):
-    return (
-        has_forbidden_action_language(analysis)
-        or has_open_close_direction_contradiction(analysis, context)
-    )
+def _constraint_error(analysis, context):
+    if has_forbidden_action_language(analysis):
+        return UnifiedAnalysisValidationError(
+            'analysis contains prohibited action language',
+            reason_code='llm_constraint_violation',
+            stage='business_rule', error_code='forbidden_action_language',
+            path='analysis', expected='informational decision support only',
+        )
+    if has_open_close_direction_contradiction(analysis, context):
+        return UnifiedAnalysisValidationError(
+            'analysis contradicts the supplied open-to-close direction',
+            reason_code='llm_constraint_violation',
+            stage='business_rule', error_code='market_fact_contradiction',
+            path='narrative', expected='match market_data.open_to_close_direction',
+        )
+    return None
 
 
 def _normalize_result(result, context):
     if result.failure_reason is not None:
-        return None, None
+        return None, None, []
     if not isinstance(result.analysis, dict):
-        return None, UnifiedAnalysisValidationError('analysis must be an object')
+        return None, UnifiedAnalysisValidationError(
+            'analysis must be an object', error_code='invalid_type',
+            path='analysis', expected='object', actual=result.analysis,
+        ), []
+    standardized, changes = standardize_unified_analysis_input(result.analysis)
     try:
-        return normalize_unified_analysis(result.analysis, context), None
+        analysis = normalize_unified_analysis(
+            standardized, context, already_standardized=True,
+        )
+        constraint_error = _constraint_error(analysis, context)
+        if constraint_error is not None:
+            return None, constraint_error, changes
+        return analysis, None, changes
     except UnifiedAnalysisValidationError as exc:
-        return None, exc
+        return None, exc, changes
+
+
+def _log_validation_error(error, *, symbol, provider, model, attempt):
+    details = error.safe_details()
+    logger.warning(
+        'LLM validation failed provider=%s model=%s symbol=%s attempt=%s '
+        'prompt_version=%s analysis_version=%s stage=%s error_code=%s '
+        'path=%s expected=%s actual_type=%s actual=%r missing_fields=%s '
+        'extra_fields=%s illegal_strategy_id=%s hard_constraint_triggered=%s',
+        provider, model, symbol, attempt,
+        AGENT_ANALYSIS_PROMPT_VERSION, AGENT_ANALYSIS_VERSION,
+        details.get('validation_stage'), details.get('validation_error_code'),
+        details.get('validation_error_path'), details.get('expected'),
+        details.get('actual_type'), details.get('actual'),
+        details.get('missing_fields'), details.get('extra_fields'),
+        details.get('illegal_strategy_id'), details.get('hard_constraint_triggered'),
+    )
 
 
 def run_agent_analysis(security, user, *, provider=None):
@@ -114,6 +238,8 @@ def run_agent_analysis(security, user, *, provider=None):
             None,
             'unsupported_context_version',
             'Unsupported agent context version.',
+            validation_stage='schema',
+            validation_error_code='unsupported_context_version',
         )
 
     llm_provider = provider
@@ -131,6 +257,8 @@ def run_agent_analysis(security, user, *, provider=None):
             None,
             'llm_unsupported_provider',
             'LLM service is not configured.',
+            validation_stage='api',
+            validation_error_code='unsupported_provider',
         )
 
     if not llm_provider.is_configured():
@@ -140,42 +268,73 @@ def run_agent_analysis(security, user, *, provider=None):
             model,
             'llm_api_key_missing',
             'LLM service is not configured.',
+            validation_stage='api',
+            validation_error_code='api_key_missing',
         )
 
     first = llm_provider.generate_structured_analysis(
         build_unified_analysis_prompt(context),
     )
     result = first
-    retried = False
-    if _needs_retry(first):
-        result = llm_provider.generate_structured_analysis(
-            build_strict_json_retry_prompt(context),
-        )
-        retried = True
+    schema_repair_attempted = False
+    formatting_normalizations = []
+    hard_constraint_violation_detected = False
+    analysis, validation_error, changes = _normalize_result(result, context)
+    formatting_normalizations.extend(changes)
 
-    analysis, validation_error = _normalize_result(result, context)
-    if analysis is None and result.failure_reason is None and not retried:
-        # Parseable JSON but missing/invalid schema: one controlled repair retry.
-        repaired = llm_provider.generate_structured_analysis(
-            build_strict_json_retry_prompt(context),
+    if validation_error is not None:
+        hard_constraint_violation_detected = validation_error.hard_constraint_triggered
+        _log_validation_error(
+            validation_error, symbol=context.get('symbol'),
+            provider=provider_name, model=model, attempt='initial',
         )
-        result = repaired
-        retried = True
-        analysis, validation_error = _normalize_result(result, context)
 
-    if analysis is not None and _violates_constraints(analysis, context):
-        result = llm_provider.generate_structured_analysis(
-            build_constraint_retry_prompt(context),
-        )
-        analysis, validation_error = _normalize_result(result, context)
+    should_repair = _needs_retry(result) or validation_error is not None
+    if should_repair:
+        if validation_error is not None:
+            repair_prompt = build_schema_repair_prompt(
+                context, validation_error.safe_details(),
+            )
+        else:
+            repair_prompt = build_strict_json_retry_prompt(
+                context,
+                {
+                    'validation_stage': 'json_parse',
+                    'validation_error_code': result.failure_reason,
+                    'expected': 'one complete JSON object',
+                },
+            )
+        result = llm_provider.generate_structured_analysis(repair_prompt)
+        schema_repair_attempted = True
+        analysis, validation_error, changes = _normalize_result(result, context)
+        formatting_normalizations.extend(changes)
+        if validation_error is not None:
+            hard_constraint_violation_detected = (
+                hard_constraint_violation_detected
+                or validation_error.hard_constraint_triggered
+            )
+            _log_validation_error(
+                validation_error, symbol=context.get('symbol'),
+                provider=provider_name, model=model, attempt='repair',
+            )
 
     if result.failure_reason is not None:
+        validation_stage = (
+            'json_parse'
+            if result.failure_reason in {'invalid_json', 'invalid_response'}
+            else 'api'
+        )
         return _fallback(
             context,
             provider_name,
             model,
             f'llm_{result.failure_reason}',
             FAILURE_REASONS.get(result.failure_reason, 'LLM service is unavailable.'),
+            validation_stage=validation_stage,
+            validation_error_code=result.failure_reason,
+            schema_repair_attempted=schema_repair_attempted,
+            formatting_normalizations=formatting_normalizations,
+            hard_constraint_violation_detected=hard_constraint_violation_detected,
         )
     if analysis is None:
         return _fallback(
@@ -184,14 +343,15 @@ def run_agent_analysis(security, user, *, provider=None):
             model,
             getattr(validation_error, 'reason_code', 'llm_schema_validation_failed'),
             'LLM returned an invalid structured response.',
-        )
-    if _violates_constraints(analysis, context):
-        return _fallback(
-            context,
-            provider_name,
-            model,
-            'llm_constraint_violation',
-            'LLM response violated analysis constraints.',
+            validation_error=validation_error,
+            schema_repair_attempted=schema_repair_attempted,
+            formatting_normalizations=formatting_normalizations,
+            hard_constraint_violation_detected=hard_constraint_violation_detected,
         )
 
-    return _success(context, provider_name, model, analysis)
+    return _success(
+        context, provider_name, model, analysis,
+        schema_repair_attempted=schema_repair_attempted,
+        formatting_normalizations=formatting_normalizations,
+        hard_constraint_violation_detected=hard_constraint_violation_detected,
+    )
