@@ -5,6 +5,7 @@ import math
 import re
 from copy import deepcopy
 
+from agent.recommended_action_service import build_recommended_action
 from market.regime_config import (
     REGIME_BEARISH,
     REGIME_BULLISH,
@@ -600,6 +601,7 @@ def _validated_decision(context, backend, llm_selected):
             'allow_new_long': constraints.get('allow_new_long') is True,
             'allowed_strategy_ids': sorted(allowed),
         },
+        'recommended_action': build_recommended_action(context, final),
     }
 
 
@@ -689,6 +691,7 @@ def build_quantitative_fallback(context, fallback_reason):
                 'allow_new_long': constraints.get('allow_new_long') is True,
                 'allowed_strategy_ids': sorted(_currently_allowed_ids(context, list(AGENT_STRATEGY_IDS))),
             },
+            'recommended_action': build_recommended_action(context, final),
         },
         'available_strategies': deepcopy(context.get('available_strategies') or []),
     }

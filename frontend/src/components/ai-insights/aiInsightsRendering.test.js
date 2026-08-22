@@ -158,6 +158,21 @@ const dualAnalysis = {
     override_reason: 'New long exposure is prohibited by the deterministic risk engine.',
     decision_source: 'llm_synthesis_with_constraint_override',
     fallback_used: false,
+    backend_hard_constraints: { risk_off: true, allow_new_long: false },
+    recommended_action: {
+      action: 'reduce_risk',
+      label: 'Reduce Risk / No New Long',
+      summary: 'Review the existing position for risk reduction under the active Risk-Off constraint.',
+      position_context: 'existing_position',
+      new_entry_allowed: false,
+      suggested_exposure_change: 'review_risk_reduction',
+      automatic_execution: false,
+      monitoring_triggers: [{
+        factor: 'Risk-Off constraint',
+        condition: 'A hard risk constraint prohibits new long exposure.',
+      }],
+      reassessment_reason: 'Regenerate the analysis when a hard risk constraint changes.',
+    },
   },
 }
 
@@ -306,7 +321,7 @@ test('v4 renders backend, independent AI, and validated system decision separate
   assert.match(backendText, /Trend Following/)
   assert.match(aiText, /Independent AI Assessment/)
   assert.match(aiText, /generated independently without receiving the backend’s suggested strategy/)
-  assert.match(decisionText, /Validated System Decision/)
+  assert.match(decisionText, /Final Validated Decision/)
   assert.match(decisionText, /Final Validated Strategy Defensive \/ Risk-Off/)
   assert.match(decisionText, /Original AI Selection Mean Reversion/)
   assert.match(decisionText, /Hard Constraint Override Applied/)
@@ -346,7 +361,7 @@ test('strategy comparison renders every backend-named candidate and verified fac
   assert.match(text, /Trend Following/)
   assert.match(text, /Mean Reversion/)
   assert.match(text, /Defensive \/ Risk-Off/)
-  assert.match(text, /No Suitable Strategy/)
+  assert.match(text, /No Active Strategy Signal/)
   assert.match(text, /ADX 18.4/)
   assert.match(text, /Supporting Factors/)
   assert.match(text, /Conflicting Factors/)
@@ -380,4 +395,131 @@ test('fallback source is explicit and optional hybrid fields do not crash', () =
   assert.match(sourceText, /Fallback/)
   assert.match(render(components.SupportingEvidenceCard, { analysis: fallback }), /No supporting evidence/)
   assert.match(render(components.LimitationsCard, { analysis: fallback }), /No additional limitations/)
+})
+
+test('recommended action is explicit and never claims automatic execution', () => {
+  const text = render(components.RecommendedActionCard, { analysis: dualAnalysis })
+  assert.match(text, /Recommended Action/)
+  assert.match(text, /Reduce Risk \/ No New Long/)
+  assert.match(text, /New Entry Allowed No/)
+  assert.match(text, /Automatic Execution No/)
+  assert.match(text, /No order will be placed automatically/)
+})
+
+test('no-strategy action differs correctly for no position and existing position', () => {
+  const decision = dualAnalysis.validated_system_decision
+  const noPosition = {
+    ...dualAnalysis,
+    validated_system_decision: {
+      ...decision,
+      validated_final_strategy: 'no_strategy',
+      recommended_action: {
+        ...decision.recommended_action,
+        action: 'wait',
+        label: 'Wait / No New Entry',
+        position_context: 'no_position',
+        summary: 'No active strategy currently meets its entry requirements.',
+      },
+    },
+  }
+  const existingPosition = {
+    ...noPosition,
+    validated_system_decision: {
+      ...noPosition.validated_system_decision,
+      recommended_action: {
+        ...noPosition.validated_system_decision.recommended_action,
+        action: 'hold_and_monitor',
+        label: 'Hold and Monitor',
+        position_context: 'existing_position',
+      },
+    },
+  }
+  const waitText = render(components.RecommendedActionCard, { analysis: noPosition })
+  const holdText = render(components.RecommendedActionCard, { analysis: existingPosition })
+  assert.match(waitText, /Wait \/ No New Entry/)
+  assert.doesNotMatch(waitText, /Hold and Monitor/)
+  assert.match(holdText, /Hold and Monitor/)
+})
+
+test('no strategy is explained as active abstention rather than failure', () => {
+  const noStrategy = {
+    ...dualAnalysis,
+    validated_system_decision: {
+      ...dualAnalysis.validated_system_decision,
+      validated_final_strategy: 'no_strategy',
+      hard_constraint_override_applied: false,
+      override_reason: null,
+    },
+  }
+  const text = render(components.ValidatedSystemDecisionCard, { analysis: noStrategy })
+  assert.match(text, /No Active Strategy Signal/)
+  assert.match(text, /active abstention after strategy comparison, not a system failure/)
+})
+
+const expandedEvidenceAnalysis = {
+  ...dualAnalysis,
+  llm_independent_assessment: {
+    ...dualAnalysis.llm_independent_assessment,
+    supporting_evidence: [
+      { factor: 'Latest Price', source_path: 'market_data.latest.close', value: 214.3764, interpretation: 'Latest supplied close.' },
+      { factor: 'MA20', source_path: 'technical_analysis.moving_averages.ma20', value: 211.2349, interpretation: 'Short moving average.' },
+      { factor: 'MA60', source_path: 'technical_analysis.moving_averages.ma60', value: 207.9876, interpretation: 'Medium moving average.' },
+      { factor: 'RSI14', source_path: 'technical_analysis.momentum.rsi14', value: 48.376, interpretation: 'Momentum reading.' },
+      { factor: 'MACD', source_path: 'technical_analysis.momentum.macd', value: -0.107332, interpretation: 'Momentum spread.' },
+      { factor: 'ADX', source_path: 'technical_analysis.trend.adx', value: 18.4000005, interpretation: 'Trend strength.' },
+      { factor: 'Choppiness', source_path: 'technical_analysis.trend.choppiness', value: 63.1234, interpretation: 'Range tendency.' },
+      { factor: 'Volatility Percentile', source_path: 'market_regime.volatility.volatility_percentile', value: 0.843254, interpretation: 'Relative volatility.' },
+      { factor: 'Relative to SPY 20D', source_path: 'technical_analysis.relative_performance.vs_spy_20d', value: 0.024676, interpretation: 'Benchmark-relative return.' },
+      { factor: 'Mean Reversion Entry Conditions Met', source_path: 'technical_analysis.mean_reversion_entry.entry_conditions_met', value: false, interpretation: 'Configured entry gate.' },
+    ],
+    limitations: ['One', 'Two', 'Three', 'Four', 'Five'],
+  },
+}
+
+test('key evidence defaults to seven relevant rows and offers expansion', () => {
+  const selected = components.selectKeyEvidence(expandedEvidenceAnalysis)
+  const text = render(components.SupportingEvidenceCard, { analysis: expandedEvidenceAnalysis })
+  assert.equal(selected.length, 7)
+  assert.match(text, /Show all evidence \(10\)/)
+  assert.doesNotMatch(text, /Relative to SPY 20D/)
+})
+
+test('expanded evidence is grouped and exposes Show less', () => {
+  const text = render(components.SupportingEvidenceCard, {
+    analysis: expandedEvidenceAnalysis,
+    initiallyExpanded: true,
+  })
+  assert.match(text, /Price and Moving Averages/)
+  assert.match(text, /Momentum/)
+  assert.match(text, /Trend and Market Regime/)
+  assert.match(text, /Volatility and Risk/)
+  assert.match(text, /Relative Performance/)
+  assert.match(text, /Strategy Entry Conditions/)
+  assert.match(text, /All Supporting Evidence/)
+  assert.match(text, /Show less/)
+})
+
+test('evidence values use readable precision, percentages, and booleans', () => {
+  const evidence = expandedEvidenceAnalysis.llm_independent_assessment.supporting_evidence
+  assert.equal(components.formatEvidenceValue(evidence[0]), '214.38')
+  assert.equal(components.formatEvidenceValue(evidence[7]), '84.33%')
+  assert.equal(components.formatEvidenceValue(evidence[8]), '2.47%')
+  assert.equal(components.formatEvidenceValue(evidence[9]), 'Not Met')
+})
+
+test('limitations default to three and expand without changing the source payload', () => {
+  const collapsed = render(components.LimitationsCard, { analysis: expandedEvidenceAnalysis })
+  const expanded = render(components.LimitationsCard, {
+    analysis: expandedEvidenceAnalysis,
+    initiallyExpanded: true,
+  })
+  assert.match(collapsed, /One Two Three/)
+  assert.doesNotMatch(collapsed, /Four/)
+  assert.match(collapsed, /Show all limitations \(5\)/)
+  assert.match(expanded, /Four Five/)
+  assert.match(expanded, /Show fewer limitations/)
+})
+
+test('recommended action remains optional for older stored responses', () => {
+  assert.equal(components.RecommendedActionCard({ analysis: hybridAnalysis }), null)
 })

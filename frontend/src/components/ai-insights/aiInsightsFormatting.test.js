@@ -11,6 +11,8 @@ test('formats market enums into human-readable labels', () => {
   assert.equal(formatAnalysisEnumLabel('high_volatility'), 'High Volatility')
   assert.equal(formatAnalysisEnumLabel('sideways_range'), 'Sideways Range')
   assert.equal(formatAnalysisEnumLabel('bullish_trend'), 'Bullish Trend')
+  assert.equal(formatAnalysisEnumLabel('no_strategy'), 'No Active Strategy Signal')
+  assert.equal(formatAnalysisEnumLabel('portfolio_unavailable'), 'Portfolio Unavailable')
 })
 
 test('formats ratios and percentage values separately', () => {

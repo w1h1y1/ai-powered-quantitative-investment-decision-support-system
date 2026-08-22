@@ -10,13 +10,14 @@ import {
 import { agentAnalysisApi } from '../../services/agentAnalysisApi'
 import { securityApi } from '../../services/securityApi'
 
-function SectionCard({ children, eyebrow, title }) {
+function SectionCard({ children, className = '', eyebrow, title }) {
+  const titleId = `ai-${String(title).toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
   return (
-    <section className="ai-insights-card" aria-labelledby={`ai-${title}`}>
+    <section className={`ai-insights-card ${className}`.trim()} aria-labelledby={titleId}>
       <div className="ai-insights-card-heading">
         <div>
           <p>{eyebrow}</p>
-          <h2 id={`ai-${title}`}>{title}</h2>
+          <h2 id={titleId}>{title}</h2>
         </div>
       </div>
       {children}
@@ -78,6 +79,7 @@ function Metric({ label, value }) {
 }
 
 function strategyDisplayName(analysis, strategyId) {
+  if (strategyId === 'no_strategy') return 'No Active Strategy Signal'
   const definition = (analysis.available_strategies || [])
     .find((item) => item?.id === strategyId)
   return definition?.name || formatAnalysisEnumLabel(strategyId)
@@ -119,14 +121,19 @@ export function DecisionSummaryCard({ analysis }) {
 export function FinalAIAssessmentCard({ analysis }) {
   const independent = independentAssessment(analysis)
   const assessment = independent?.llm_market_assessment || analysis.final_market_assessment || {}
+  const strategy = independent?.llm_final_strategy_assessment || analysis.final_strategy_assessment || {}
+  const risk = independent?.llm_risk_assessment || analysis.risk_assessment || {}
   return (
     <SectionCard eyebrow="Independent judgment" title="Independent AI Assessment">
       <div className="ai-insights-decision-grid">
         <Metric label="Market Regime" value={formatAnalysisEnumLabel(assessment.regime)} />
         <Metric label="Direction" value={formatAnalysisEnumLabel(assessment.direction)} />
         <Metric label="Confidence" value={formatRatioAsPercent(assessment.confidence)} />
+        <Metric label="AI Selected Strategy" value={strategyDisplayName(analysis, strategy.selected_strategy)} />
+        <Metric label="Risk Level" value={formatAnalysisEnumLabel(risk.risk_level)} />
       </div>
       <p className="ai-insights-card-copy">{assessment.summary || 'No final summary was provided.'}</p>
+      {strategy.reason ? <p className="ai-insights-card-copy">{strategy.reason}</p> : null}
       {analysis.backend_suggestion_exposed_to_llm === false ? (
         <p className="ai-insights-card-copy">
           The AI assessment was generated independently without receiving the backend’s suggested strategy.
@@ -192,7 +199,7 @@ export function StrategyComparisonCard({ analysis }) {
           const candidate = comparison[definition.id] || {}
           return (
             <article className="ai-insights-strategy-candidate" key={definition.id}>
-              <span>{definition.name || formatAnalysisEnumLabel(definition.id)}</span>
+              <span>{strategyDisplayName(analysis, definition.id)}</span>
               <div>
                 <p><strong>{formatAnalysisEnumLabel(candidate.suitability) || '—'}</strong></p>
                 <h3>Supporting Factors</h3>
@@ -220,7 +227,7 @@ export function QuantitativeAssessmentCard({ analysis }) {
     <SectionCard eyebrow="Deterministic engine" title="Quantitative Engine Assessment">
       <div className="ai-insights-decision-grid">
         <Metric label="Preliminary Regime" value={formatAnalysisEnumLabel(assessment.preliminary_regime)} />
-        <Metric label="Suggested Strategy" value={formatAnalysisEnumLabel(assessment.suggested_strategy)} />
+        <Metric label="Suggested Strategy" value={strategyDisplayName(analysis, assessment.suggested_strategy)} />
         <Metric label="Confidence" value={formatRatioAsPercent(assessment.confidence)} />
         <Metric label="Risk Off" value={assessment.risk_off ? 'Yes' : 'No'} />
         <Metric label="Allow New Long" value={assessment.allow_new_long ? 'Yes' : 'No'} />
@@ -236,9 +243,19 @@ export function QuantitativeAssessmentCard({ analysis }) {
 
 export function QuantitativeAgreementCard({ analysis }) {
   const agreement = analysis.quantitative_agreement || {}
+  const decision = analysis.validated_system_decision || {}
+  const agreementLabel = agreement.agrees_with_backend === true
+    ? 'Agree'
+    : agreement.agrees_with_backend === false ? 'Disagree' : 'Unavailable'
   return (
-    <SectionCard eyebrow="Comparison" title="Agreement with Quantitative Engine">
-      <Metric label="Agreement" value={agreement.agrees_with_backend ? 'Agree' : 'Disagree'} />
+    <SectionCard eyebrow="Comparison and safeguards" title="Agreement / System Validation">
+      <div className="ai-insights-decision-grid">
+        <Metric label="Backend / AI Agreement" value={agreementLabel} />
+        <Metric label="Regime Agreement" value={agreement.regime_agreement === true ? 'Agree' : agreement.regime_agreement === false ? 'Disagree' : 'Unavailable'} />
+        <Metric label="Strategy Agreement" value={agreement.strategy_agreement === true ? 'Agree' : agreement.strategy_agreement === false ? 'Disagree' : 'Unavailable'} />
+        <Metric label="Risk Override" value={decision.hard_constraint_override_applied ? 'Applied' : 'Not Applied'} />
+        <Metric label="Fallback" value={decision.fallback_used ? 'Yes' : 'No'} />
+      </div>
       {agreement.differences?.length ? (
         <ul className="ai-insights-risk-list">
           {agreement.differences.map((item, index) => (
@@ -267,32 +284,151 @@ export function RiskAssessmentCard({ analysis }) {
   )
 }
 
-export function SupportingEvidenceCard({ analysis }) {
-  const evidence = independentAssessment(analysis)?.supporting_evidence || analysis.supporting_evidence || []
+const EVIDENCE_GROUPS = [
+  'Price and Moving Averages',
+  'Momentum',
+  'Trend and Market Regime',
+  'Volatility and Risk',
+  'Relative Performance',
+  'Strategy Entry Conditions',
+  'Other Evidence',
+]
+
+export function evidenceGroup(item) {
+  const source = `${item?.source_path || ''} ${item?.factor || ''}`.toLowerCase()
+  if (/mean_reversion_entry|entry condition/.test(source)) return 'Strategy Entry Conditions'
+  if (/relative_performance|relative to|\bvs[_ ]/.test(source)) return 'Relative Performance'
+  if (/volatil|\batr\b|risk|drawdown/.test(source)) return 'Volatility and Risk'
+  if (/momentum|\brsi|macd/.test(source)) return 'Momentum'
+  if (/trend|regime|adx|choppiness|confirmation/.test(source)) return 'Trend and Market Regime'
+  if (/moving_average|latest|\bprice\b|\bma\d+|\bema\d+|\bsma\d+|bollinger/.test(source)) {
+    return 'Price and Moving Averages'
+  }
+  return 'Other Evidence'
+}
+
+export function formatEvidenceValue(item) {
+  const value = item?.value
+  const descriptor = `${item?.source_path || ''} ${item?.factor || ''}`.toLowerCase()
+  if (typeof value === 'boolean') return value ? 'Met' : 'Not Met'
+  if (typeof value !== 'number' || !Number.isFinite(value)) return value ?? '—'
+  if (/confirmation.*score/.test(descriptor)) {
+    const label = value >= 0.67 ? 'Strong' : value >= 0.34 ? 'Neutral' : 'Weak'
+    return `${label} (${(value * 100).toFixed(2)}%)`
+  }
+  if (/percent|percentile|\bvs[_ ]|return|drawdown|win.rate|portfolio.weight/.test(descriptor)) {
+    return `${(value * 100).toFixed(2)}%`
+  }
+  if (/trade.count|quantity/.test(descriptor)) return String(Math.round(value))
+  return value.toFixed(2)
+}
+
+export function selectKeyEvidence(analysis, limit = 7) {
+  const independent = independentAssessment(analysis)
+  const evidence = independent?.supporting_evidence || analysis.supporting_evidence || []
+  const selected = analysis.validated_system_decision?.validated_final_strategy
+    || independent?.llm_final_strategy_assessment?.selected_strategy
+    || analysis.final_strategy_assessment?.selected_strategy
+  const comparison = independent?.llm_strategy_comparison || analysis.strategy_comparison || {}
+  const namedFactors = new Set([
+    ...(comparison[selected]?.supporting_factors || []),
+    ...(comparison[selected]?.conflicting_factors || []),
+  ].map((item) => String(item?.factor || '').toLowerCase()))
+  const preferred = [
+    /latest price|\bclose\b/, /\bma20\b/, /\bma60\b/, /\brsi/, /macd/,
+    /\badx/, /choppiness/, /entry conditions? met/, /volatility percentile/,
+  ]
+  return evidence
+    .map((item, index) => {
+      const factor = String(item?.factor || '').toLowerCase()
+      const preferredIndex = preferred.findIndex((pattern) => pattern.test(factor))
+      const score = (namedFactors.has(factor) ? 100 : 0)
+        + (preferredIndex >= 0 ? 50 - preferredIndex : 0)
+        + (/risk|allow new long/.test(factor) ? 40 : 0)
+      return { item, index, score }
+    })
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .slice(0, Math.min(limit, evidence.length))
+    .map(({ item }) => item)
+}
+
+function EvidenceRows({ evidence }) {
   return (
-    <SectionCard eyebrow="Validated context" title="Supporting Evidence">
-      {evidence.length ? (
-        <div className="ai-insights-list-block">
-          {evidence.map((item, index) => (
-            <div className="ai-insights-context-line" key={`${item.factor}-${index}`}>
-              <span>{item.factor}</span>
-              <p><strong>{String(item.value)}</strong><small>{item.interpretation}</small></p>
-            </div>
-          ))}
+    <div className="ai-insights-list-block">
+      {evidence.map((item, index) => (
+        <div className="ai-insights-context-line" key={`${item.factor}-${item.source_path || index}`}>
+          <span>{item.factor}</span>
+          <p><strong>{formatEvidenceValue(item)}</strong><small>{item.interpretation}</small></p>
         </div>
+      ))}
+    </div>
+  )
+}
+
+export function SupportingEvidenceCard({ analysis, initiallyExpanded = false }) {
+  const evidence = independentAssessment(analysis)?.supporting_evidence || analysis.supporting_evidence || []
+  const [showAll, setShowAll] = useState(initiallyExpanded)
+  const keyEvidence = selectKeyEvidence(analysis)
+  const grouped = EVIDENCE_GROUPS.map((name) => ({
+    name,
+    evidence: evidence.filter((item) => evidenceGroup(item) === name),
+  })).filter((group) => group.evidence.length)
+  return (
+    <SectionCard
+      className="ai-insights-supporting-evidence-card"
+      eyebrow="Validated context"
+      title={showAll ? 'All Supporting Evidence' : 'Key Supporting Evidence'}
+    >
+      {evidence.length ? (
+        <>
+          {showAll ? (
+            <div className="ai-insights-evidence-groups">
+              {grouped.map((group) => (
+                <section className="ai-insights-evidence-group" key={group.name}>
+                  <h3>{group.name}</h3>
+                  <EvidenceRows evidence={group.evidence} />
+                </section>
+              ))}
+            </div>
+          ) : <EvidenceRows evidence={keyEvidence} />}
+          {evidence.length > keyEvidence.length ? (
+            <button
+              className="ai-insights-expand-button"
+              type="button"
+              aria-expanded={showAll}
+              onClick={() => setShowAll((value) => !value)}
+            >
+              {showAll ? 'Show less' : `Show all evidence (${evidence.length})`}
+            </button>
+          ) : null}
+        </>
       ) : <p className="ai-insights-card-copy">No supporting evidence was returned.</p>}
     </SectionCard>
   )
 }
 
-export function LimitationsCard({ analysis }) {
+export function LimitationsCard({ analysis, initiallyExpanded = false }) {
   const limitations = independentAssessment(analysis)?.limitations || analysis.limitations || []
+  const [showAll, setShowAll] = useState(initiallyExpanded)
+  const visible = showAll ? limitations : limitations.slice(0, 3)
   return (
-    <SectionCard eyebrow="Uncertainty" title="Limitations">
+    <SectionCard className="ai-insights-limitations-card" eyebrow="Uncertainty" title="Limitations">
       {limitations.length ? (
-        <ul className="ai-insights-risk-list">
-          {limitations.map((item) => <li key={item}>{item}</li>)}
-        </ul>
+        <>
+          <ul className="ai-insights-risk-list">
+            {visible.map((item) => <li key={item}>{item}</li>)}
+          </ul>
+          {limitations.length > 3 ? (
+            <button
+              className="ai-insights-expand-button"
+              type="button"
+              aria-expanded={showAll}
+              onClick={() => setShowAll((value) => !value)}
+            >
+              {showAll ? 'Show fewer limitations' : `Show all limitations (${limitations.length})`}
+            </button>
+          ) : null}
+        </>
       ) : <p className="ai-insights-card-copy">No additional limitations were reported.</p>}
     </SectionCard>
   )
@@ -301,19 +437,71 @@ export function LimitationsCard({ analysis }) {
 export function ValidatedSystemDecisionCard({ analysis }) {
   const decision = analysis.validated_system_decision || {}
   const agreement = analysis.quantitative_agreement || {}
+  const independent = independentAssessment(analysis)
+  const market = independent?.llm_market_assessment || analysis.final_market_assessment || {}
+  const strategy = independent?.llm_final_strategy_assessment || analysis.final_strategy_assessment || {}
+  const risk = independent?.llm_risk_assessment || analysis.risk_assessment || {}
+  const constraints = decision.backend_hard_constraints || {}
+  const finalStrategy = decision.validated_final_strategy
+  const shortReason = decision.override_reason
+    || strategy.reason
+    || market.summary
+    || analysis.backend_quantitative_assessment?.explanation?.[0]
   return (
-    <SectionCard eyebrow="Django validated" title="Validated System Decision">
+    <SectionCard className="ai-insights-primary-decision" eyebrow="Django validated" title="Final Validated Decision">
       <div className="ai-insights-decision-grid">
-        <Metric label="Final Validated Strategy" value={strategyDisplayName(analysis, decision.validated_final_strategy)} />
+        <Metric label="Market Regime" value={formatAnalysisEnumLabel(market.regime || analysis.backend_quantitative_assessment?.preliminary_regime)} />
+        <Metric label="Final Validated Strategy" value={strategyDisplayName(analysis, finalStrategy)} />
+        <Metric label="Confidence" value={formatRatioAsPercent(strategy.confidence ?? market.confidence ?? analysis.backend_quantitative_assessment?.confidence)} />
+        <Metric label="Risk Level" value={formatAnalysisEnumLabel(risk.risk_level)} />
+        <Metric label="Allow New Long" value={(constraints.allow_new_long ?? analysis.risk_assessment?.allow_new_long) ? 'Yes' : 'No'} />
         <Metric label="Backend / AI Agreement" value={agreement.agrees_with_backend === true ? 'Agree' : agreement.agrees_with_backend === false ? 'Disagree' : 'Unavailable'} />
         <Metric label="Hard Constraint Override" value={decision.hard_constraint_override_applied ? 'Applied' : 'Not Applied'} />
         <Metric label="Decision Source" value={formatAnalysisEnumLabel(decision.decision_source || analysis.decision_source)} />
         <Metric label="Fallback" value={decision.fallback_used ? 'Yes' : 'No'} />
       </div>
-      {decision.override_reason ? <p className="ai-insights-card-copy">{decision.override_reason}</p> : null}
+      {shortReason ? <p className="ai-insights-card-copy">{shortReason}</p> : null}
+      {finalStrategy === 'no_strategy' ? (
+        <p className="ai-insights-abstention-note">
+          Neither trend following nor mean reversion currently meets its validated entry requirements.
+          This is an active abstention after strategy comparison, not a system failure.
+        </p>
+      ) : null}
       {decision.llm_selected_strategy ? (
         <Metric label="Original AI Selection" value={strategyDisplayName(analysis, decision.llm_selected_strategy)} />
       ) : null}
+    </SectionCard>
+  )
+}
+
+export function RecommendedActionCard({ analysis }) {
+  const action = analysis.validated_system_decision?.recommended_action
+  if (!action) return null
+  return (
+    <SectionCard className="ai-insights-recommended-action" eyebrow="Deterministic decision support" title="Recommended Action">
+      <div className="ai-insights-action-summary">
+        <strong>{action.label}</strong>
+        <p>{action.summary}</p>
+      </div>
+      <div className="ai-insights-decision-grid">
+        <Metric label="Position Context" value={formatAnalysisEnumLabel(action.position_context)} />
+        <Metric label="New Entry Allowed" value={action.new_entry_allowed ? 'Yes' : 'No'} />
+        <Metric label="Exposure Guidance" value={formatAnalysisEnumLabel(action.suggested_exposure_change)} />
+        <Metric label="Automatic Execution" value="No" />
+      </div>
+      {action.monitoring_triggers?.length ? (
+        <div className="ai-insights-monitoring-triggers">
+          <h3>Monitor and Reassess When</h3>
+          {action.monitoring_triggers.map((trigger) => (
+            <div className="ai-insights-context-line" key={`${trigger.factor}-${trigger.condition}`}>
+              <span>{trigger.factor}</span>
+              <p>{trigger.condition}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {action.reassessment_reason ? <p className="ai-insights-card-copy">{action.reassessment_reason}</p> : null}
+      <p className="ai-insights-action-disclaimer">Decision support only. No order will be placed automatically.</p>
     </SectionCard>
   )
 }
@@ -708,26 +896,23 @@ export default function AIInsightsContent() {
             {analysisUnavailable ? <UnavailableState reason={analysisUnavailable} /> : null}
             {error ? <ErrorState message={error} /> : null}
             {analysis.backend_quantitative_assessment ? (
-              <>
-                <QuantitativeAssessmentCard analysis={analysis} />
-                {analysis.llm_independent_assessment ? (
-                  <>
-                    <FinalAIAssessmentCard analysis={analysis} />
-                    <FinalStrategyAssessmentCard analysis={analysis} />
-                    <StrategyComparisonCard analysis={analysis} />
-                    <div className="ai-insights-analysis-grid">
-                      <RiskAssessmentCard analysis={analysis} />
-                      <SupportingEvidenceCard analysis={analysis} />
-                      <LimitationsCard analysis={analysis} />
-                    </div>
-                  </>
-                ) : null}
+              <div className="ai-insights-v4-layout">
                 <ValidatedSystemDecisionCard analysis={analysis} />
-                <div className="ai-insights-analysis-grid">
-                  <QuantitativeAgreementCard analysis={analysis} />
-                  <AnalysisSourceCard analysis={analysis} metadata={analysis.metadata} />
+                <RecommendedActionCard analysis={analysis} />
+                <div className="ai-insights-two-column">
+                  <QuantitativeAssessmentCard analysis={analysis} />
+                  {analysis.llm_independent_assessment ? (
+                    <FinalAIAssessmentCard analysis={analysis} />
+                  ) : <AnalysisSourceCard analysis={analysis} metadata={analysis.metadata} />}
                 </div>
-              </>
+                {analysis.llm_independent_assessment ? <StrategyComparisonCard analysis={analysis} /> : null}
+                <div className="ai-insights-two-column">
+                  <RiskAssessmentCard analysis={analysis} />
+                  <QuantitativeAgreementCard analysis={analysis} />
+                </div>
+                <SupportingEvidenceCard analysis={analysis} />
+                <LimitationsCard analysis={analysis} />
+              </div>
             ) : analysis.final_market_assessment ? (
               <>
                 <FinalAIAssessmentCard analysis={analysis} />
