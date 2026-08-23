@@ -8,6 +8,7 @@ produces investment advice.
 from copy import deepcopy
 from datetime import date
 from decimal import Decimal
+from math import isfinite
 
 from backtest.services import (
     BacktestDataError,
@@ -61,13 +62,16 @@ CONFIRMATION_LEVEL_NEUTRAL = 'Neutral'
 CONFIRMATION_LEVEL_STRONG = 'Strong'
 CONFIRMATION_WEAK_THRESHOLD = 0.4
 CONFIRMATION_STRONG_THRESHOLD = 0.6
+HYBRID_STRATEGY_ID = 'market-regime-core-swing'
+HYBRID_STRATEGY_LABEL = 'Market-Regime Hybrid Strategy (Core + Swing)'
 
 
 def _number(value, digits=4):
     if value is None:
         return None
     try:
-        return round(float(value), digits)
+        number = float(value)
+        return round(number, digits) if isfinite(number) else None
     except (TypeError, ValueError):
         return None
 
@@ -350,14 +354,14 @@ def _backtest_payload(security, benchmark, latest_date):
     if latest_date is None:
         return {
             'available': False,
-            'unavailable_reason': 'Insufficient historical data.',
+            'unavailable_reason': 'Insufficient historical data for the selected security Hybrid Strategy backtest.',
         }
     try:
         end_date = date.fromisoformat(str(latest_date))
     except (TypeError, ValueError):
         return {
             'available': False,
-            'unavailable_reason': 'Backtest context unavailable.',
+            'unavailable_reason': 'The Hybrid Strategy backtest period could not be determined.',
         }
     start_date = subtract_years(end_date, 1)
     try:
@@ -373,7 +377,7 @@ def _backtest_payload(security, benchmark, latest_date):
     except BacktestInsufficientHistoryError:
         return {
             'available': False,
-            'unavailable_reason': 'Insufficient historical data.',
+            'unavailable_reason': 'Insufficient historical data for the selected security Hybrid Strategy backtest.',
         }
     except (
         BacktestDataError,
@@ -382,25 +386,95 @@ def _backtest_payload(security, benchmark, latest_date):
     ):
         return {
             'available': False,
-            'unavailable_reason': 'Backtest context unavailable.',
+            'unavailable_reason': 'No valid Market-Regime Hybrid Strategy backtest was available for the selected security.',
+        }
+
+    result_security = result.get('security') or {}
+    result_strategy = result.get('strategy_parameters') or {}
+    data_source = result.get('data_source') or {}
+    result_symbol = str(result_security.get('symbol') or '').upper()
+    actual_start = data_source.get('actual_start_date')
+    actual_end = data_source.get('actual_end_date')
+    total_return = _number(result.get('total_return'), 6)
+    max_drawdown = _number(result.get('maximum_drawdown'), 6)
+    annualized_volatility = _number(result.get('annualized_volatility'), 6)
+    total_fees = _number(result.get('total_fees'), 4)
+    trade_count = _number(result.get('executed_order_count'), 0)
+    win_rate = _number(result.get('swing_win_rate'), 4)
+    if result_symbol != str(security.symbol).upper():
+        return {
+            'available': False,
+            'unavailable_reason': 'The Hybrid Strategy backtest did not match the selected security.',
+        }
+    if result_strategy.get('strategy_id') != HYBRID_STRATEGY_ID:
+        return {
+            'available': False,
+            'unavailable_reason': 'The available backtest was not produced by the formal Market-Regime Hybrid Strategy.',
+        }
+    try:
+        actual_period_valid = date.fromisoformat(str(actual_start)) <= date.fromisoformat(str(actual_end))
+    except (TypeError, ValueError):
+        actual_period_valid = False
+    if not actual_period_valid or any(value is None for value in (
+        total_return, max_drawdown, annualized_volatility,
+        total_fees, trade_count, win_rate,
+    )):
+        return {
+            'available': False,
+            'unavailable_reason': 'The Market-Regime Hybrid Strategy backtest result was incomplete.',
         }
 
     return {
         'available': True,
         'source': 'market_regime_hybrid_backtest',
-        'strategy': 'Market-Regime Hybrid Strategy (Core + Swing)',
+        'strategy': HYBRID_STRATEGY_LABEL,
+        'strategy_id': HYBRID_STRATEGY_ID,
+        'symbol': result_symbol,
         'strategy_components': ['Core', 'Swing'],
         'benchmark': getattr(benchmark, 'symbol', None),
-        'start_date': start_date.isoformat(),
-        'end_date': end_date.isoformat(),
+        'start_date': actual_start,
+        'end_date': actual_end,
         'initial_capital': 10000.0,
-        'total_return': _number(result.get('total_return'), 6),
-        'max_drawdown': _number(result.get('maximum_drawdown'), 6),
-        'annualized_volatility': _number(result.get('annualized_volatility'), 6),
-        'total_fees': _number(result.get('total_fees'), 4),
-        'trade_count': _number(result.get('executed_order_count'), 0),
-        'win_rate': _number(result.get('swing_win_rate'), 4),
+        'total_return': total_return,
+        'max_drawdown': max_drawdown,
+        'annualized_volatility': annualized_volatility,
+        'total_fees': total_fees,
+        'transaction_fee': 1.0,
+        'trade_count': trade_count,
+        'win_rate': win_rate,
     }
+
+
+def _hybrid_backtest_evidence_payload(backtest_context, symbol):
+    """Expose the one implemented Hybrid backtest without implying candidate ranking."""
+
+    base = {
+        'available': backtest_context.get('available') is True,
+        'strategy': HYBRID_STRATEGY_ID,
+        'strategy_label': HYBRID_STRATEGY_LABEL,
+        'symbol': symbol,
+        'evidence_scope': 'complete_hybrid_strategy',
+        'comparison_supported': False,
+        'unavailable_reason': backtest_context.get('unavailable_reason'),
+    }
+    if base['available'] is not True:
+        base['unavailable_reason'] = base['unavailable_reason'] or (
+            'No valid Market-Regime Hybrid Strategy backtest was available for the selected security.'
+        )
+        return base
+    for field in (
+        'benchmark', 'start_date', 'end_date', 'initial_capital',
+        'total_return', 'max_drawdown', 'annualized_volatility',
+        'win_rate', 'trade_count', 'transaction_fee', 'total_fees',
+    ):
+        value = backtest_context.get(field)
+        if value is not None:
+            base[field] = value
+    base.update({
+        'win_rate_scope': 'swing_cycles',
+        'trade_count_scope': 'executed_orders',
+    })
+    return base
 
 
 def _data_quality_payload(
@@ -468,7 +542,7 @@ def _hard_constraints_payload(strategy_selection, portfolio_context):
 
 
 def _strategy_evidence_payload(backtest_context):
-    """Describe comparison evidence without running two new strategy backtests."""
+    """Legacy compatibility projection; never a candidate backtest source."""
 
     unavailable_reason = 'strategy_specific_comparison_not_available'
     candidates = {}
@@ -497,6 +571,10 @@ def _strategy_evidence_payload(backtest_context):
         'backtest_evidence_available': False,
         'comparable_candidate_backtests_available': False,
         'comparison_unavailable_reason': unavailable_reason,
+        'compatibility_note': (
+            'Legacy candidate-comparison fields remain false. Use hybrid_backtest_evidence '
+            'for the complete Core + Swing strategy result.'
+        ),
         'candidates': candidates,
         'related_hybrid_backtest': {
             **backtest_context,
@@ -527,7 +605,7 @@ def _evidence_catalog(
     market_regime,
     market_context,
     quantitative_assessment,
-    backtest_context,
+    hybrid_backtest_evidence,
 ):
     """Return the only factor/value pairs an LLM may cite numerically."""
 
@@ -570,19 +648,19 @@ def _evidence_catalog(
         for factor, value, source_path in candidates
         if value is not None
     ]
-    if backtest_context.get('available') is True:
+    if hybrid_backtest_evidence.get('available') is True:
         for factor, field in (
             ('Hybrid Backtest Total Return', 'total_return'),
             ('Hybrid Backtest Max Drawdown', 'max_drawdown'),
             ('Hybrid Backtest Win Rate', 'win_rate'),
             ('Hybrid Backtest Trade Count', 'trade_count'),
         ):
-            value = backtest_context.get(field)
+            value = hybrid_backtest_evidence.get(field)
             if value is not None:
                 catalog.append({
                     'factor': factor,
                     'value': value,
-                    'source_path': f'backtest_context.{field}',
+                    'source_path': f'hybrid_backtest_evidence.{field}',
                 })
     return catalog
 
@@ -618,6 +696,10 @@ def build_unified_agent_context(security, user, *, benchmark=None):
         strategy_selection,
         portfolio_context,
     )
+    hybrid_backtest_evidence = _hybrid_backtest_evidence_payload(
+        backtest_context,
+        security.symbol,
+    )
     return {
         'symbol': security.symbol,
         'as_of_date': as_of_date,
@@ -629,6 +711,7 @@ def build_unified_agent_context(security, user, *, benchmark=None):
         'market_context': market_context,
         'portfolio_context': portfolio_context,
         'backtest_context': backtest_context,
+        'hybrid_backtest_evidence': hybrid_backtest_evidence,
         'quantitative_assessment': quantitative_assessment,
         'hard_constraints': hard_constraints,
         'available_strategies': _available_strategies_payload(hard_constraints),
@@ -640,7 +723,7 @@ def build_unified_agent_context(security, user, *, benchmark=None):
             market_regime=market_regime,
             market_context=market_context,
             quantitative_assessment=quantitative_assessment,
-            backtest_context=backtest_context,
+            hybrid_backtest_evidence=hybrid_backtest_evidence,
         ),
         'data_quality': _data_quality_payload(
             market_data=market_data,
@@ -723,11 +806,9 @@ def build_llm_strategy_context(context):
         },
         'market_context': deepcopy(context.get('market_context') or {}),
         'portfolio_context': deepcopy(context.get('portfolio_context') or {}),
-        'backtest_context': deepcopy(context.get('backtest_context') or {}),
+        'hybrid_backtest_evidence': deepcopy(context.get('hybrid_backtest_evidence') or {}),
         'hard_constraints': deepcopy(context.get('hard_constraints') or {}),
         'available_strategies': strategies,
-        'related_backtest_strategy': deepcopy(context.get('related_backtest_strategy') or {}),
-        'strategy_evidence': deepcopy(context.get('strategy_evidence') or {}),
         'evidence_catalog': evidence_catalog,
         'data_quality': deepcopy(context.get('data_quality') or {}),
     }

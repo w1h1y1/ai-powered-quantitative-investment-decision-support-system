@@ -27,6 +27,7 @@ TOP_LEVEL_KEYS = (
     'market_context',
     'portfolio_context',
     'backtest_context',
+    'hybrid_backtest_evidence',
     'quantitative_assessment',
     'hard_constraints',
     'available_strategies',
@@ -85,8 +86,14 @@ def regime_result(
     }
 
 
-def hybrid_backtest_result():
+def hybrid_backtest_result(symbol='AAPL'):
     return {
+        'security': {'symbol': symbol},
+        'strategy_parameters': {'strategy_id': 'market-regime-core-swing'},
+        'data_source': {
+            'actual_start_date': '2025-08-14',
+            'actual_end_date': '2026-08-14',
+        },
         'total_return': '12.407411',
         'maximum_drawdown': '8.307625',
         'annualized_volatility': '12.418187',
@@ -142,7 +149,7 @@ class UnifiedAgentContextServiceTests(TestCase):
             for index in range(240)
         ])
 
-    def build(self, symbol, *, regime=None, portfolio_summary=None):
+    def build(self, symbol, *, regime=None, portfolio_summary=None, backtest_result=None):
         security = self.securities[symbol]
         regime = regime or regime_result(
             symbol=symbol,
@@ -153,7 +160,7 @@ class UnifiedAgentContextServiceTests(TestCase):
             patch('agent.unified_context_service.get_market_regime', return_value=regime),
             patch(
                 'agent.unified_context_service.run_market_regime_core_swing_backtest',
-                return_value=hybrid_backtest_result(),
+                return_value=backtest_result or hybrid_backtest_result(symbol),
             ),
             patch(
                 'agent.unified_context_service.get_portfolio_summary',
@@ -189,6 +196,10 @@ class UnifiedAgentContextServiceTests(TestCase):
         self.assertFalse(
             context['strategy_evidence']['related_hybrid_backtest']['comparable_for_candidate_selection']
         )
+        self.assertTrue(context['hybrid_backtest_evidence']['available'])
+        self.assertEqual(context['hybrid_backtest_evidence']['strategy'], 'market-regime-core-swing')
+        self.assertEqual(context['hybrid_backtest_evidence']['symbol'], 'AAPL')
+        self.assertFalse(context['hybrid_backtest_evidence']['comparison_supported'])
         self.assertEqual(
             [item['id'] for item in context['available_strategies']],
             ['trend_following', 'mean_reversion', 'risk_off', 'no_strategy'],
@@ -285,7 +296,32 @@ class UnifiedAgentContextServiceTests(TestCase):
         self.assertEqual(context['backtest_context']['strategy_components'], ['Core', 'Swing'])
         self.assertEqual(context['backtest_context']['benchmark'], 'SPY')
         self.assertEqual(context['backtest_context']['trade_count'], 3)
+        self.assertEqual(context['backtest_context']['start_date'], '2025-08-14')
+        self.assertEqual(context['backtest_context']['transaction_fee'], 1.0)
+        self.assertEqual(context['hybrid_backtest_evidence']['total_return'], 12.407411)
         self.assertTrue(context['data_quality']['backtest_context_available'])
+
+    def test_hybrid_evidence_rejects_a_result_for_another_symbol(self):
+        self.seed_prices(self.securities['AAPL'])
+        context = self.build('AAPL', backtest_result=hybrid_backtest_result('JPM'))
+
+        self.assertFalse(context['hybrid_backtest_evidence']['available'])
+        self.assertEqual(
+            context['hybrid_backtest_evidence']['unavailable_reason'],
+            'The Hybrid Strategy backtest did not match the selected security.',
+        )
+
+    def test_hybrid_evidence_rejects_incomplete_real_metrics(self):
+        self.seed_prices(self.securities['AAPL'])
+        result = hybrid_backtest_result('AAPL')
+        result.pop('swing_win_rate')
+        context = self.build('AAPL', backtest_result=result)
+
+        self.assertFalse(context['hybrid_backtest_evidence']['available'])
+        self.assertEqual(
+            context['hybrid_backtest_evidence']['unavailable_reason'],
+            'The Market-Regime Hybrid Strategy backtest result was incomplete.',
+        )
 
     def test_context_does_not_run_duplicate_candidate_backtests(self):
         self.seed_prices(self.securities['AAPL'])
@@ -365,8 +401,10 @@ class UnifiedAgentContextServiceTests(TestCase):
         self.assertFalse(context['backtest_context']['available'])
         self.assertEqual(
             context['backtest_context']['unavailable_reason'],
-            'Insufficient historical data.',
+            'Insufficient historical data for the selected security Hybrid Strategy backtest.',
         )
+        self.assertFalse(context['hybrid_backtest_evidence']['available'])
+        self.assertIn('Insufficient historical data', context['hybrid_backtest_evidence']['unavailable_reason'])
         self.assertTrue(context['market_regime']['available'])
 
     def test_partial_failure_does_not_break_other_modules(self):

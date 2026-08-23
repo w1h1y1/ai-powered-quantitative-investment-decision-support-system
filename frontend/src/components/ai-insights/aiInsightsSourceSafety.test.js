@@ -74,6 +74,7 @@ test('v4 layout keeps evidence and limitations outside paired short-card rows', 
   assert.match(v4, /ValidatedSystemDecisionCard[\s\S]*RecommendedActionCard/)
   assert.match(v4, /ai-insights-two-column[\s\S]*QuantitativeAssessmentCard[\s\S]*FinalAIAssessmentCard/)
   assert.match(v4, /StrategyComparisonCard/)
+  assert.match(v4, /StrategyComparisonCard[\s\S]*HybridBacktestEvidenceCard/)
   assert.match(v4, /ai-insights-two-column[\s\S]*RiskAssessmentCard[\s\S]*QuantitativeAgreementCard/)
   assert.match(v4, /SupportingEvidenceCard[\s\S]*LimitationsCard/)
   assert.doesNotMatch(v4, /ai-insights-analysis-grid[\s\S]*SupportingEvidenceCard/)

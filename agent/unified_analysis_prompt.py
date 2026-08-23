@@ -16,7 +16,8 @@ Required evaluation order:
 3. Assess ADX and Choppiness trend strength and range behaviour.
 4. Assess RSI and MACD momentum.
 5. Assess volatility and relative market/sector performance.
-6. Use only genuinely comparable candidate backtests; disclose when they are unavailable.
+6. If supplied, use the complete Market-Regime Hybrid Strategy backtest only as contextual evidence
+   about the implemented Core + Swing system. It is not candidate-comparison evidence.
 7. Evaluate every available strategy exactly once with both supporting and conflicting evidence.
 8. Select one supplied strategy id, including no_strategy when evidence is insufficient or non-actionable.
 9. Explain why every non-selected candidate was not selected.
@@ -24,7 +25,7 @@ Required evaluation order:
 
 Candidate principles:
 - trend_following improves only when direction, moving averages, trend strength, momentum, benchmark context,
-  and any comparable backtest evidence are sufficiently aligned.
+  and current-condition evidence are sufficiently aligned.
 - mean_reversion requires actual entry evidence. A sideways/range label alone is never sufficient. Check the
   supplied lower-band and RSI entry-condition facts; when entry_conditions_met is false, do not select it.
 - risk_off is a defensive state, not an independently backtested return strategy. It is appropriate for hard
@@ -37,8 +38,18 @@ Hard rules:
 - Every evidence object must copy factor, source_path, and value from one evidence_catalog entry exactly.
 - Do not put new numeric claims in narrative text. Numeric display comes from validated evidence objects.
 - llm_strategy_comparison must contain exactly every id in available_strategies.
-- If comparable candidate backtests are unavailable, backtest_evidence_available must be false and no
-  candidate may cite the related hybrid backtest as comparison evidence.
+- This project has exactly one formal backtest: Market-Regime Hybrid Strategy (Core + Swing), strategy id
+  market-regime-core-swing. Its Core uses trend-following logic and its Swing component uses pullback-based
+  logic. Neither component is a standalone Trend Following or Mean Reversion backtest.
+- hybrid_backtest_evidence_available must exactly match hybrid_backtest_evidence.available.
+- Never claim that Trend Following, Mean Reversion, Risk-Off, or No Strategy has a standalone backtest.
+- Never use the Hybrid result to rank candidates or claim one candidate historically outperformed another.
+- Candidate cards are a current-market-suitability comparison based on technical indicators, market regime,
+  relative performance, entry conditions, risk, and hard constraints—not historical candidate returns.
+- If Hybrid evidence is unavailable, state that limitation and assess current suitability from the remaining
+  supplied indicators, regime, relative performance, entry-condition, and risk evidence.
+- Copy any cited Hybrid metric exactly from evidence_catalog; never invent annualized return, Sharpe ratio,
+  CAGR, alpha, or other metrics absent from hybrid_backtest_evidence.
 - hard_constraints are authoritative, but Django will independently enforce them after this response.
 - Do not provide BUY/SELL/HOLD labels, guaranteed returns, certain price predictions, target prices,
   position sizes, or direct trading instructions.
@@ -47,7 +58,7 @@ Hard rules:
   llm_strategy_comparison: {<each candidate id>: {suitability, supporting_factors, conflicting_factors}}
   llm_final_strategy_assessment: {selected_strategy, confidence, suitability, reason, why_not_alternatives}
   llm_risk_assessment: {risk_level, summary}
-  backtest_evidence_available: boolean
+  hybrid_backtest_evidence_available: boolean
   supporting_evidence: [{factor, source_path, value, interpretation}]
   limitations: [string]
 - supporting_factors and conflicting_factors are arrays of {factor, source_path, value, interpretation}.
@@ -99,15 +110,15 @@ def _schema_example(context):
             'suitability': comparison[selected]['suitability'],
             'reason': 'Concise strategy rationale grounded in referenced evidence.',
             'why_not_alternatives': [
-                f'{strategy_id} was not selected because its verified evidence ranked lower.'
+                f'{strategy_id} was not selected because current validated evidence was less suitable.'
                 for strategy_id in candidate_ids if strategy_id != selected
             ],
         },
         'llm_risk_assessment': {
             'risk_level': 'medium', 'summary': 'Concise qualitative risk assessment.',
         },
-        'backtest_evidence_available': (
-            (context.get('strategy_evidence') or {}).get('backtest_evidence_available') is True
+        'hybrid_backtest_evidence_available': (
+            (context.get('hybrid_backtest_evidence') or {}).get('available') is True
         ),
         'supporting_evidence': [{
             'factor': evidence.get('factor'), 'source_path': evidence.get('source_path'),
