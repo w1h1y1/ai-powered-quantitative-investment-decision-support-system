@@ -65,14 +65,14 @@ def valid_analysis(regime='high_volatility', strategy='risk_off'):
             'allow_new_long': regime != 'high_volatility',
             'summary': 'Backend hard constraints remain authoritative.',
         },
-        'backtest_evidence_available': False,
+        'hybrid_backtest_evidence_available': True,
         'supporting_evidence': [{
             'factor': 'Market Data Available',
             'source_path': 'market_data.available',
             'value': True,
             'interpretation': 'Current market data is available for independent assessment.',
         }],
-        'limitations': ['Strategy-specific comparison backtests are unavailable.'],
+        'limitations': ['The Hybrid result does not provide standalone candidate backtests.'],
     }
 
 
@@ -146,8 +146,14 @@ def regime_fixture(symbol):
     }
 
 
-def backtest_fixture():
+def backtest_fixture(symbol='AAPL'):
     return {
+        'security': {'symbol': symbol},
+        'strategy_parameters': {'strategy_id': 'market-regime-core-swing'},
+        'data_source': {
+            'actual_start_date': '2025-08-14',
+            'actual_end_date': '2026-08-14',
+        },
         'total_return': '12.407411',
         'maximum_drawdown': '8.307625',
         'annualized_volatility': '12.418187',
@@ -226,7 +232,7 @@ class AgentPipelineIntegrationTests(TestCase):
             ),
             patch(
                 'agent.unified_context_service.run_market_regime_core_swing_backtest',
-                return_value=backtest_fixture(),
+                return_value=backtest_fixture(symbol),
             ),
             patch(
                 'agent.unified_context_service.get_portfolio_summary',

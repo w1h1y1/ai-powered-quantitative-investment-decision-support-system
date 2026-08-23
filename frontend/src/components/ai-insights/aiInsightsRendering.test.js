@@ -130,6 +130,23 @@ const dualAnalysis = {
   decision_source: 'llm_synthesis_with_constraint_override',
   llm_assessment_mode: 'independent',
   backend_suggestion_exposed_to_llm: false,
+  hybrid_backtest_evidence: {
+    available: true,
+    strategy: 'market-regime-core-swing',
+    strategy_label: 'Market-Regime Hybrid Strategy (Core + Swing)',
+    symbol: 'AAPL',
+    evidence_scope: 'complete_hybrid_strategy',
+    comparison_supported: false,
+    start_date: '2025-08-14',
+    end_date: '2026-08-14',
+    total_return: 12.407411,
+    max_drawdown: 8.307625,
+    annualized_volatility: 12.418187,
+    win_rate: 66.666667,
+    trade_count: 36,
+    transaction_fee: 1,
+    total_fees: 36,
+  },
   available_strategies: hybridAnalysis.available_strategies,
   backend_quantitative_assessment: hybridAnalysis.quantitative_assessment,
   llm_independent_assessment: {
@@ -357,7 +374,8 @@ test('v4 fallback renders backend and system result without claiming AI success'
 test('strategy comparison renders every backend-named candidate and verified factors', () => {
   const text = render(components.StrategyComparisonCard, { analysis: hybridAnalysis })
   assert.match(text, /Strategy Comparison/)
-  assert.match(text, /Comparable Backtest Evidence Unavailable/)
+  assert.match(text, /Current Market Suitability Comparison/)
+  assert.doesNotMatch(text, /Comparable Backtest Evidence|Unavailable/)
   assert.match(text, /Trend Following/)
   assert.match(text, /Mean Reversion/)
   assert.match(text, /Defensive \/ Risk-Off/)
@@ -365,6 +383,39 @@ test('strategy comparison renders every backend-named candidate and verified fac
   assert.match(text, /ADX 18.4/)
   assert.match(text, /Supporting Factors/)
   assert.match(text, /Conflicting Factors/)
+})
+
+test('hybrid backtest card renders only real whole-strategy metrics and scope', () => {
+  const text = render(components.HybridBacktestEvidenceCard, { analysis: dualAnalysis })
+  assert.match(text, /Hybrid Strategy Backtest Evidence/)
+  assert.match(text, /Available/)
+  assert.match(text, /Market-Regime Hybrid Strategy \(Core \+ Swing\)/)
+  assert.match(text, /Total Return 12\.41%/)
+  assert.match(text, /Maximum Drawdown 8\.31%/)
+  assert.match(text, /Executed Orders 36/)
+  assert.match(text, /does not compare standalone trend-following and mean-reversion strategies/)
+  assert.doesNotMatch(text, /Sharpe|Annualized Return|CAGR|Alpha/)
+})
+
+test('hybrid backtest unavailable path is compact, specific, and explains assessment basis', () => {
+  const unavailable = {
+    ...dualAnalysis,
+    hybrid_backtest_evidence: {
+      available: false,
+      strategy: 'market-regime-core-swing',
+      symbol: 'AAPL',
+      unavailable_reason: 'The Hybrid Strategy backtest result was incomplete.',
+    },
+  }
+  const text = render(components.HybridBacktestEvidenceCard, { analysis: unavailable })
+  assert.match(text, /Not available for this analysis/)
+  assert.match(text, /backtest result was incomplete/)
+  assert.match(text, /technical indicators, market regime, relative performance, entry conditions, and risk constraints/)
+  assert.doesNotMatch(text, /^Unavailable$/)
+})
+
+test('hybrid backtest card remains optional for older stored analyses', () => {
+  assert.equal(components.HybridBacktestEvidenceCard({ analysis: {} }), null)
 })
 
 test('strategy comparison remains optional for stored v2 analyses', () => {

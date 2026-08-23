@@ -5,6 +5,7 @@ import { normalizeSecuritySearchOption } from '../security/securitySearchModel'
 import {
   formatAnalysisEnumLabel,
   formatGeneratedAt,
+  formatPercentValue,
   formatRatioAsPercent,
 } from './aiInsightsFormatting'
 import { agentAnalysisApi } from '../../services/agentAnalysisApi'
@@ -190,10 +191,9 @@ export function StrategyComparisonCard({ analysis }) {
 
   return (
     <SectionCard eyebrow="Candidate evaluation" title="Strategy Comparison">
-      <Metric
-        label="Comparable Backtest Evidence"
-        value={(independent?.backtest_evidence_available ?? analysis.backtest_evidence_available) ? 'Available' : 'Unavailable'}
-      />
+      <p className="ai-insights-comparison-note">
+        Current Market Suitability Comparison · Based on current validated evidence, not standalone strategy backtests.
+      </p>
       <div className="ai-insights-strategy-comparison-grid">
         {catalog.map((definition) => {
           const candidate = comparison[definition.id] || {}
@@ -217,6 +217,53 @@ export function StrategyComparisonCard({ analysis }) {
           )
         })}
       </div>
+    </SectionCard>
+  )
+}
+
+function formatBacktestNumber(value, digits = 2) {
+  if (value === null || value === undefined || value === '') return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed.toFixed(digits) : null
+}
+
+export function HybridBacktestEvidenceCard({ analysis }) {
+  const evidence = analysis.hybrid_backtest_evidence
+  if (!evidence || typeof evidence !== 'object') return null
+  const available = evidence.available === true
+  const metrics = available ? [
+    ['Strategy', evidence.strategy_label],
+    ['Security', evidence.symbol],
+    ['Test Period', evidence.start_date && evidence.end_date ? `${evidence.start_date} – ${evidence.end_date}` : null],
+    ['Total Return', evidence.total_return == null ? null : formatPercentValue(evidence.total_return)],
+    ['Maximum Drawdown', evidence.max_drawdown == null ? null : formatPercentValue(evidence.max_drawdown)],
+    ['Annualized Volatility', evidence.annualized_volatility == null ? null : formatPercentValue(evidence.annualized_volatility)],
+    ['Swing Win Rate', evidence.win_rate == null ? null : formatPercentValue(evidence.win_rate)],
+    ['Executed Orders', evidence.trade_count == null ? null : String(Math.round(Number(evidence.trade_count)))],
+    ['Per-order Fee', formatBacktestNumber(evidence.transaction_fee)],
+    ['Total Fees', formatBacktestNumber(evidence.total_fees)],
+  ].filter(([, value]) => value !== null && value !== undefined && value !== '') : []
+
+  return (
+    <SectionCard className="ai-insights-hybrid-backtest-card" eyebrow="Implemented strategy evidence" title="Hybrid Strategy Backtest Evidence">
+      <span className={`ai-insights-evidence-status ${available ? 'is-available' : 'is-unavailable'}`}>
+        {available ? 'Available' : 'Not available for this analysis'}
+      </span>
+      {available ? (
+        <>
+          <div className="ai-insights-hybrid-metrics">
+            {metrics.map(([label, value]) => <Metric key={label} label={label} value={value} />)}
+          </div>
+          <p className="ai-insights-hybrid-explanation">
+            The available backtest evaluates the complete Market-Regime Hybrid Strategy, combining a trend-following core with pullback-based swing trading. It does not compare standalone trend-following and mean-reversion strategies.
+          </p>
+        </>
+      ) : (
+        <div className="ai-insights-hybrid-unavailable">
+          <p>{evidence.unavailable_reason || 'No validated Market-Regime Hybrid Strategy backtest was available for the selected security.'}</p>
+          <p>The current assessment therefore relies on technical indicators, market regime, relative performance, entry conditions, and risk constraints.</p>
+        </div>
+      )}
     </SectionCard>
   )
 }
@@ -312,6 +359,10 @@ export function formatEvidenceValue(item) {
   const descriptor = `${item?.source_path || ''} ${item?.factor || ''}`.toLowerCase()
   if (typeof value === 'boolean') return value ? 'Met' : 'Not Met'
   if (typeof value !== 'number' || !Number.isFinite(value)) return value ?? '—'
+  if (String(item?.source_path || '').startsWith('hybrid_backtest_evidence.')) {
+    if (/trade.count/.test(descriptor)) return String(Math.round(value))
+    return /return|drawdown|volatil|win.rate/.test(descriptor) ? `${value.toFixed(2)}%` : value.toFixed(2)
+  }
   if (/confirmation.*score/.test(descriptor)) {
     const label = value >= 0.67 ? 'Strong' : value >= 0.34 ? 'Neutral' : 'Weak'
     return `${label} (${(value * 100).toFixed(2)}%)`
@@ -906,6 +957,7 @@ export default function AIInsightsContent() {
                   ) : <AnalysisSourceCard analysis={analysis} metadata={analysis.metadata} />}
                 </div>
                 {analysis.llm_independent_assessment ? <StrategyComparisonCard analysis={analysis} /> : null}
+                <HybridBacktestEvidenceCard analysis={analysis} />
                 <div className="ai-insights-two-column">
                   <RiskAssessmentCard analysis={analysis} />
                   <QuantitativeAgreementCard analysis={analysis} />
@@ -918,6 +970,7 @@ export default function AIInsightsContent() {
                 <FinalAIAssessmentCard analysis={analysis} />
                 <FinalStrategyAssessmentCard analysis={analysis} />
                 <StrategyComparisonCard analysis={analysis} />
+                <HybridBacktestEvidenceCard analysis={analysis} />
                 <div className="ai-insights-analysis-grid">
                   <QuantitativeAssessmentCard analysis={analysis} />
                   <QuantitativeAgreementCard analysis={analysis} />

@@ -52,6 +52,20 @@ class IndependentContextTests(SimpleTestCase):
         self.assertIn('source_path', system)
         self.assertNotIn('quantitative_agreement:', system)
 
+    def test_prompt_defines_hybrid_as_whole_strategy_context_not_candidate_ranking(self):
+        system = build_unified_analysis_prompt(self.llm_context)['system']
+        self.assertIn('exactly one formal backtest', system)
+        self.assertIn('complete Market-Regime Hybrid Strategy', system)
+        self.assertIn('not candidate-comparison evidence', system)
+        self.assertIn('Never use the Hybrid result to rank candidates', system)
+        self.assertNotIn('Use only genuinely comparable candidate backtests', system)
+
+    def test_llm_context_uses_canonical_hybrid_field_without_legacy_comparison_payloads(self):
+        self.assertIn('hybrid_backtest_evidence', self.llm_context)
+        self.assertNotIn('backtest_context', self.llm_context)
+        self.assertNotIn('strategy_evidence', self.llm_context)
+        self.assertNotIn('related_backtest_strategy', self.llm_context)
+
 
 class EvidenceValidationV4Tests(SimpleTestCase):
     def setUp(self):
@@ -105,6 +119,56 @@ class EvidenceValidationV4Tests(SimpleTestCase):
             normalize_unified_analysis(data, context)
         self.assertEqual(raised.exception.error_code, 'mean_reversion_entry_not_met')
 
+    def test_available_hybrid_evidence_is_accepted_only_as_contextual_support(self):
+        context = deepcopy(self.context)
+        context['hybrid_backtest_evidence'] = {
+            'available': True,
+            'strategy': 'market-regime-core-swing',
+            'strategy_label': 'Market-Regime Hybrid Strategy (Core + Swing)',
+            'symbol': 'AAPL',
+            'evidence_scope': 'complete_hybrid_strategy',
+            'comparison_supported': False,
+            'total_return': 12.407411,
+        }
+        context['evidence_catalog'].append({
+            'factor': 'Hybrid Backtest Total Return',
+            'source_path': 'hybrid_backtest_evidence.total_return',
+            'value': 12.407411,
+        })
+        data = trend_analysis()
+        data['hybrid_backtest_evidence_available'] = True
+        data['supporting_evidence'] = [{
+            'factor': 'Hybrid Backtest Total Return',
+            'source_path': 'hybrid_backtest_evidence.total_return',
+            'value': 12.407411,
+            'interpretation': 'The complete Hybrid system provides contextual historical evidence.',
+        }]
+
+        normalized = normalize_unified_analysis(data, context)
+
+        self.assertTrue(normalized['hybrid_backtest_evidence_available'])
+        self.assertFalse(normalized['backtest_evidence_available'])
+
+    def test_fabricated_backtest_number_in_narrative_is_rejected(self):
+        data = trend_analysis()
+        data['limitations'] = ['The Hybrid backtest returned 99.9% in this period.']
+
+        with self.assertRaises(UnifiedAnalysisValidationError) as raised:
+            normalize_unified_analysis(data, self.context)
+
+        self.assertEqual(raised.exception.error_code, 'unverified_backtest_numeric_claim')
+
+    def test_hybrid_candidate_outperformance_claim_is_rejected(self):
+        data = trend_analysis()
+        data['limitations'] = [
+            'The Hybrid backtest proves Trend Following historically outperformed Mean Reversion.'
+        ]
+
+        with self.assertRaises(UnifiedAnalysisValidationError) as raised:
+            normalize_unified_analysis(data, self.context)
+
+        self.assertEqual(raised.exception.error_code, 'non_comparable_backtest_claim')
+
 
 class DjangoMergeV4Tests(SimpleTestCase):
     def test_django_merge_does_not_call_llm_twice(self):
@@ -114,6 +178,18 @@ class DjangoMergeV4Tests(SimpleTestCase):
             response = run_agent_analysis(object(), object(), provider=provider)
         self.assertEqual(response['analysis_status'], 'success')
         self.assertEqual(len(provider.calls), 1)
+
+    def test_missing_hybrid_backtest_does_not_force_fallback(self):
+        backend = context_fixture(active=False)
+        self.assertFalse(backend['hybrid_backtest_evidence']['available'])
+        with patch('agent.agent_analysis_service.build_unified_agent_context', return_value=backend):
+            response = run_agent_analysis(
+                object(), object(), provider=FakeProvider(analysis=valid_analysis()),
+            )
+
+        self.assertEqual(response['analysis_status'], 'success')
+        self.assertFalse(response['analysis']['validated_system_decision']['fallback_used'])
+        self.assertFalse(response['analysis']['hybrid_backtest_evidence']['available'])
 
     def test_django_computes_regime_and_strategy_agreement_separately(self):
         backend = context_fixture(active=True)

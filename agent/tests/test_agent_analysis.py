@@ -54,6 +54,15 @@ def context_fixture(*, active=False):
             }
             for strategy_id in STRATEGY_IDS
         ],
+        'hybrid_backtest_evidence': {
+            'available': False,
+            'strategy': 'market-regime-core-swing',
+            'strategy_label': 'Market-Regime Hybrid Strategy (Core + Swing)',
+            'symbol': 'AAPL',
+            'evidence_scope': 'complete_hybrid_strategy',
+            'comparison_supported': False,
+            'unavailable_reason': 'No valid Hybrid backtest was available for this fixture.',
+        },
         'strategy_evidence': {'backtest_evidence_available': False},
         'evidence_catalog': [
             {'factor': 'ADX', 'value': 18.4, 'source_path': 'technical_analysis.trend.adx'},

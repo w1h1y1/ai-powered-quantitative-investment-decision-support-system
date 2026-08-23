@@ -36,7 +36,7 @@ ACTIVE_STRATEGIES = {STRATEGY_TREND_FOLLOWING, STRATEGY_MEAN_REVERSION}
 LLM_TOP_LEVEL_FIELDS = {
     'llm_market_assessment', 'llm_strategy_comparison',
     'llm_final_strategy_assessment', 'llm_risk_assessment',
-    'backtest_evidence_available', 'supporting_evidence', 'limitations',
+    'hybrid_backtest_evidence_available', 'supporting_evidence', 'limitations',
 }
 FORBIDDEN_ACTION_PHRASES = (
     'initiate a position', 'enter a position', 'add exposure',
@@ -162,10 +162,13 @@ def standardize_unified_analysis_input(data):
         'strategy_comparison': 'llm_strategy_comparison',
         'final_strategy_assessment': 'llm_final_strategy_assessment',
         'risk_assessment': 'llm_risk_assessment',
+        'backtest_evidence_available': 'hybrid_backtest_evidence_available',
     }
     for old, new in legacy_names.items():
-        if old in value and new not in value:
-            value[new] = value.pop(old)
+        if old in value:
+            if new not in value:
+                value[new] = value[old]
+            value.pop(old)
             changes.append(old)
     if 'quantitative_agreement' in value:
         value.pop('quantitative_agreement')
@@ -390,6 +393,59 @@ def _normalize_evidence(value, context, *, path, allow_empty):
     return normalized
 
 
+def _validate_backtest_narratives(value, path='analysis'):
+    """Reject invented Hybrid metrics and standalone-strategy backtest comparisons."""
+
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _validate_backtest_narratives(item, f'{path}.{key}')
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_backtest_narratives(item, f'{path}[{index}]')
+        return
+    if not isinstance(value, str):
+        return
+    lowered = value.lower()
+    refers_to_backtest = any(term in lowered for term in ('backtest', 'historical performance', 'hybrid result'))
+    comparison_claim = (
+        refers_to_backtest
+        and any(term in lowered for term in (
+            'outperform', 'underperform', 'best strategy', 'worst strategy',
+            'higher return', 'lower return', 'higher drawdown', 'lower drawdown',
+            'ranked first', 'ranked last',
+        ))
+        and any(term in lowered for term in ('trend', 'mean reversion', 'candidate', 'strategy'))
+    )
+    if comparison_claim:
+        raise UnifiedAnalysisValidationError(
+            'the Hybrid backtest cannot rank standalone strategy candidates',
+            reason_code='llm_evidence_validation_failed', stage='evidence',
+            error_code='non_comparable_backtest_claim', path=path,
+        )
+    if refers_to_backtest and re.search(r'(?<![A-Za-z])[-+]?\d+(?:\.\d+)?%?', value):
+        raise UnifiedAnalysisValidationError(
+            'numeric backtest claims must be supplied as validated evidence objects',
+            reason_code='llm_evidence_validation_failed', stage='evidence',
+            error_code='unverified_backtest_numeric_claim', path=path,
+        )
+
+
+def _hybrid_backtest_evidence(context):
+    source = context.get('hybrid_backtest_evidence')
+    if isinstance(source, dict):
+        return deepcopy(source)
+    return {
+        'available': False,
+        'strategy': 'market-regime-core-swing',
+        'strategy_label': 'Market-Regime Hybrid Strategy (Core + Swing)',
+        'symbol': context.get('symbol'),
+        'evidence_scope': 'complete_hybrid_strategy',
+        'comparison_supported': False,
+        'unavailable_reason': 'Hybrid backtest evidence was not supplied for this analysis.',
+    }
+
+
 def _candidate_ids(context):
     ids = [
         item.get('id') for item in (context.get('available_strategies') or [])
@@ -495,15 +551,19 @@ def normalize_unified_analysis(data, context, *, already_standardized=False):
             error_code='insufficient_items', path='llm_final_strategy_assessment.why_not_alternatives',
             expected=f'at least {len(candidate_ids) - 1} strings', actual=len(why_not),
         )
-    expected_backtest = (context.get('strategy_evidence') or {}).get('backtest_evidence_available') is True
-    actual_backtest = _boolean(data.get('backtest_evidence_available'), 'backtest_evidence_available')
+    expected_backtest = (context.get('hybrid_backtest_evidence') or {}).get('available') is True
+    actual_backtest = _boolean(
+        data.get('hybrid_backtest_evidence_available'),
+        'hybrid_backtest_evidence_available',
+    )
     if actual_backtest != expected_backtest:
         raise UnifiedAnalysisValidationError(
             'backtest evidence availability contradicts context',
             reason_code='llm_evidence_validation_failed', stage='evidence',
-            error_code='evidence_availability_mismatch', path='backtest_evidence_available',
+            error_code='evidence_availability_mismatch', path='hybrid_backtest_evidence_available',
             expected=expected_backtest, actual=actual_backtest,
         )
+    _validate_backtest_narratives(data)
     return {
         'llm_market_assessment': {
             'regime': _enum(market.get('regime'), ALLOWED_REGIMES, 'llm_market_assessment.regime'),
@@ -523,7 +583,9 @@ def normalize_unified_analysis(data, context, *, already_standardized=False):
             'risk_level': _enum(risk.get('risk_level'), ALLOWED_RISK_LEVELS, 'llm_risk_assessment.risk_level'),
             'summary': _string(risk.get('summary'), 'llm_risk_assessment.summary'),
         },
-        'backtest_evidence_available': actual_backtest,
+        'hybrid_backtest_evidence_available': actual_backtest,
+        # Candidate-specific comparison backtests do not exist in this project.
+        'backtest_evidence_available': False,
         'supporting_evidence': _normalize_evidence(data.get('supporting_evidence'), context, path='supporting_evidence', allow_empty=False),
         'limitations': _string_list(data.get('limitations'), 'limitations'),
     }
@@ -621,6 +683,7 @@ def build_validated_system_analysis(context, llm_assessment, *, backend_suggesti
         'quantitative_agreement': _agreement(backend, llm_assessment),
         'validated_system_decision': decision,
         'available_strategies': deepcopy(context.get('available_strategies') or []),
+        'hybrid_backtest_evidence': _hybrid_backtest_evidence(context),
     }
     analysis.update({
         # Read-only v3 compatibility projection for stored responses and older clients.
@@ -633,7 +696,8 @@ def build_validated_system_analysis(context, llm_assessment, *, backend_suggesti
             'risk_off': (context.get('hard_constraints') or {}).get('risk_off') is True,
             'allow_new_long': (context.get('hard_constraints') or {}).get('allow_new_long') is True,
         },
-        'backtest_evidence_available': llm_assessment['backtest_evidence_available'],
+        'hybrid_backtest_evidence_available': llm_assessment['hybrid_backtest_evidence_available'],
+        'backtest_evidence_available': False,
         'supporting_evidence': deepcopy(llm_assessment['supporting_evidence']),
         'limitations': deepcopy(llm_assessment['limitations']),
     })
@@ -694,6 +758,7 @@ def build_quantitative_fallback(context, fallback_reason):
             'recommended_action': build_recommended_action(context, final),
         },
         'available_strategies': deepcopy(context.get('available_strategies') or []),
+        'hybrid_backtest_evidence': _hybrid_backtest_evidence(context),
     }
     candidate_ids = [item.get('id') for item in analysis['available_strategies'] if item.get('id')] or list(AGENT_STRATEGY_IDS)
     comparison = {
@@ -728,6 +793,9 @@ def build_quantitative_fallback(context, fallback_reason):
             'allow_new_long': constraints.get('allow_new_long') is True,
             'summary': 'Django hard constraints remain authoritative in fallback mode.',
         },
+        'hybrid_backtest_evidence_available': (
+            (context.get('hybrid_backtest_evidence') or {}).get('available') is True
+        ),
         'backtest_evidence_available': False,
         'supporting_evidence': [],
         'limitations': ['Independent AI assessment was unavailable; deterministic fallback was used.'],
