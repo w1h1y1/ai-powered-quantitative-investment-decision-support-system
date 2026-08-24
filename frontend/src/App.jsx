@@ -12,7 +12,6 @@ import PortfolioContent from './components/portfolio/PortfolioContent'
 import WatchlistContent from './components/watchlist/WatchlistContent'
 import { useAuth } from './context/AuthContext'
 import AuthPage from './pages/AuthPage'
-import { marketAnalysisStocks } from './data/marketAnalysisData'
 import {
   dashboardData,
   mockSystemStatus,
@@ -265,7 +264,7 @@ export default function App() {
         ) : activeNavigationItem.id === 'watchlist' ? (
           <WatchlistContent onViewAnalysis={openMarketAnalysis} />
         ) : activeNavigationItem.id === 'portfolio' ? (
-          <PortfolioContent key={user?.id ?? 'anonymous'} stocks={marketAnalysisStocks} onViewAnalysis={openMarketAnalysis} />
+          <PortfolioContent key={user?.id ?? 'anonymous'} onViewAnalysis={openMarketAnalysis} />
         ) : activeNavigationItem.id === 'strategy-backtesting' ? (
           <BacktestContent />
         ) : activeNavigationItem.id === 'ai-insights' ? (
